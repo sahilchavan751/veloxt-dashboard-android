@@ -1,0 +1,390 @@
+package com.custom.srt_stream
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Bundle
+import android.os.IBinder
+import android.view.SurfaceHolder
+import android.content.pm.ActivityInfo
+import com.pedro.common.ConnectChecker
+import com.pedro.library.view.OpenGlView
+import com.pedro.library.base.Camera2Base
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity(), ConnectChecker {
+    private val CHANNEL = "com.custom.srt_stream/control"
+    private var methodChannel: MethodChannel? = null
+    
+    private var openGlView: OpenGlView? = null
+    private var streamingService: StreamingForegroundService? = null
+    private var isBound = false
+
+    private var targetWidth = 1280
+    private var targetHeight = 720
+    private var targetBitrate = 2000000
+    private var targetFps = 30
+    private var streamType = "rtmp"
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as StreamingForegroundService.LocalBinder
+            streamingService = binder.getService()
+            isBound = true
+            
+            openGlView?.let { view ->
+                streamingService?.initCamera(view, this@MainActivity, streamType)
+                streamingService?.updateOrientation()
+                startPreviewWhenSurfaceReady(view)
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            streamingService = null
+            isBound = false
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Lock to portrait so the preview stays fullscreen without rotation animation.
+        // The stream output rotation is handled by OrientationEventListener in the service.
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        
+        // Register the platform view under the channel ID so Flutter can render openGlView
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "com.custom.srt_stream/video_view",
+            SrtVideoViewFactory(this)
+        )
+
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        methodChannel?.setMethodCallHandler { call, result ->
+            handleMethodCall(call, result)
+        }
+    }
+
+    private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "initStream" -> {
+                targetWidth = call.argument<Int>("width") ?: 1280
+                targetHeight = call.argument<Int>("height") ?: 720
+                targetBitrate = call.argument<Int>("bitrate") ?: 2000000
+                targetFps = call.argument<Int>("fps") ?: 30
+                streamType = call.argument<String>("streamType") ?: "rtmp"
+                val ipVersion = call.argument<String>("ipVersion") ?: "ipv4"
+
+                // Configure JVM socket resolution for IPv4 or IPv6
+                if (ipVersion == "ipv6") {
+                    System.setProperty("java.net.preferIPv4Stack", "false")
+                    System.setProperty("java.net.preferIPv6Addresses", "true")
+                } else {
+                    System.setProperty("java.net.preferIPv4Stack", "true")
+                    System.setProperty("java.net.preferIPv6Addresses", "false")
+                }
+
+                // Spin up and bind our Foreground Service to keep streaming alive in background
+                StreamingForegroundService.startService(this)
+                val intent = Intent(this, StreamingForegroundService::class.java)
+                bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+                
+                result.success(true)
+            }
+            "startStream" -> {
+                val url = call.argument<String>("url")
+                if (url == null) {
+                    result.error("INVALID_URL", "Stream URL is required", null)
+                    return
+                }
+
+                val view = openGlView
+                if (view == null || view.holder.surface?.isValid != true) {
+                    result.error("SURFACE_NOT_READY", "Camera preview surface is not ready yet", null)
+                    return
+                }
+
+                if (isBound && streamingService != null) {
+                    val errorMsg = streamingService!!.startStream(
+                        url, targetWidth, targetHeight, targetBitrate, targetFps
+                    )
+                    if (errorMsg == null) {
+                        result.success(true)
+                    } else {
+                        result.error("STREAM_START_FAILED", errorMsg, null)
+                    }
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service not initialized or bound yet", null)
+                }
+            }
+            "stopStream" -> {
+                if (isBound && streamingService != null) {
+                    streamingService?.stopStream()
+                }
+                result.success(true)
+            }
+            "closeStream" -> {
+                if (isBound && streamingService != null) {
+                    streamingService?.stopStream()
+                    streamingService?.releaseCamera()
+                }
+                if (isBound) {
+                    unbindService(serviceConnection)
+                    isBound = false
+                }
+                StreamingForegroundService.stopService(this)
+                result.success(true)
+            }
+            "switchCamera" -> {
+                val cameraId = call.argument<String>("cameraId")
+                if (isBound && streamingService != null) {
+                    val camera = StreamingForegroundService.camera
+                    if (camera != null) {
+                        if (cameraId != null) {
+                            camera.switchCamera(cameraId)
+                        } else {
+                            camera.switchCamera()
+                        }
+                        result.success(true)
+                    } else {
+                        result.error("CAMERA_NULL", "Camera is not initialized", null)
+                    }
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "enableAudio" -> {
+                if (isBound && streamingService != null) {
+                    streamingService?.enableAudio()
+                    result.success(true)
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "disableAudio" -> {
+                if (isBound && streamingService != null) {
+                    streamingService?.disableAudio()
+                    result.success(true)
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "isAudioEnabled" -> {
+                if (isBound && streamingService != null) {
+                    result.success(streamingService?.isAudioEnabled == true)
+                } else {
+                    result.success(true)
+                }
+            }
+            "getAvailableCameras" -> {
+                try {
+                    val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                    val resultList = cameraManager.cameraIdList.map { id ->
+                        val characteristics = cameraManager.getCameraCharacteristics(id)
+                        val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                        val facingStr = when (facing) {
+                            android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Front"
+                            android.hardware.camera2.CameraMetadata.LENS_FACING_BACK -> "Back"
+                            android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL -> "External"
+                            else -> "Unknown"
+                        }
+
+                        // Get max supported resolution
+                        val streamConfigMap = characteristics.get(
+                            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+                        )
+                        val outputSizes = streamConfigMap?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+                        var maxWidth = 0
+                        var maxHeight = 0
+                        outputSizes?.forEach { size ->
+                            if (size.width * size.height > maxWidth * maxHeight) {
+                                maxWidth = size.width
+                                maxHeight = size.height
+                            }
+                        }
+
+                        // Check autofocus support
+                        val afModes = characteristics.get(
+                            android.hardware.camera2.CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
+                        )
+                        val hasAutoFocus = afModes?.any {
+                            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_AUTO ||
+                            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO ||
+                            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                        } ?: false
+
+                        // Get sensor orientation
+                        val sensorOrientation = characteristics.get(
+                            android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION
+                        ) ?: 0
+
+                        // Determine lens type from focal length
+                        val focalLengths = characteristics.get(
+                            android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                        )
+                        val focalLength = focalLengths?.firstOrNull() ?: 0f
+                        val lensType = when {
+                            facing == android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Selfie"
+                            focalLength < 2.0f -> "Ultra Wide"
+                            focalLength in 2.0f..6.0f -> "Wide"
+                            focalLength in 6.0f..15.0f -> "Telephoto"
+                            focalLength > 15.0f -> "Super Telephoto"
+                            else -> "Standard"
+                        }
+
+                        mapOf(
+                            "id" to id,
+                            "facing" to facingStr,
+                            "maxWidth" to maxWidth.toString(),
+                            "maxHeight" to maxHeight.toString(),
+                            "hasAutoFocus" to hasAutoFocus.toString(),
+                            "sensorOrientation" to sensorOrientation.toString(),
+                            "lensType" to lensType
+                        )
+                    }
+                    result.success(resultList)
+                } catch (e: Exception) {
+                    result.error("CAMERA_ERROR", e.message, null)
+                }
+            }
+            else -> {
+                result.notImplemented()
+            }
+        }
+    }
+
+    private fun startPreviewWhenSurfaceReady(view: OpenGlView) {
+        val holder = view.holder
+        if (holder.surface?.isValid == true) {
+            view.post { startPreviewIfNeeded() }
+            return
+        }
+
+        holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                holder.removeCallback(this)
+                view.post { startPreviewIfNeeded() }
+            }
+
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                if (holder.surface?.isValid == true) {
+                    holder.removeCallback(this)
+                    view.post { startPreviewIfNeeded() }
+                }
+            }
+
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                holder.removeCallback(this)
+            }
+        })
+    }
+
+    private fun startPreviewIfNeeded() {
+        val camera = StreamingForegroundService.camera ?: return
+        if (!camera.isOnPreview) {
+            camera.startPreview()
+        }
+    }
+
+    // Orientation is now handled by OrientationEventListener in StreamingForegroundService.
+    // The activity is locked to portrait, so onConfigurationChanged won't fire for rotation.
+
+    override fun onDestroy() {
+        if (isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
+        super.onDestroy()
+    }
+
+    // --- ConnectChecker Callbacks ---
+    override fun onConnectionStarted(url: String) {
+    }
+
+    override fun onConnectionSuccess() {
+        runOnUiThread {
+            methodChannel?.invokeMethod("onConnectionSuccess", null)
+        }
+    }
+
+    override fun onConnectionFailed(reason: String) {
+        runOnUiThread {
+            methodChannel?.invokeMethod("onConnectionFailed", reason)
+        }
+    }
+
+    override fun onNewBitrate(bitrate: Long) {
+        runOnUiThread {
+            methodChannel?.invokeMethod("onNewBitrate", bitrate)
+        }
+    }
+
+    override fun onDisconnect() {
+        runOnUiThread {
+            methodChannel?.invokeMethod("onDisconnect", null)
+        }
+    }
+
+    override fun onAuthError() {
+        runOnUiThread {
+            methodChannel?.invokeMethod("onAuthError", null)
+        }
+    }
+
+    override fun onAuthSuccess() {
+        runOnUiThread {
+            methodChannel?.invokeMethod("onAuthSuccess", null)
+        }
+    }
+
+    fun setOpenGlView(view: OpenGlView) {
+        this.openGlView = view
+        if (isBound && streamingService != null) {
+            // During lock/unlock, Android destroys the old surface and creates a new one.
+            // We MUST wait for the new surface to be fully valid before handing it to the
+            // streaming engine. Passing an invalid surface causes an OpenGL crash.
+            val holder = view.holder
+            if (holder.surface?.isValid == true) {
+                // Surface is already valid (cold start or fast re-creation)
+                safeSwapView(view)
+            } else {
+                // Surface not ready yet (unlock transition) — wait for Android to signal it
+                holder.addCallback(object : SurfaceHolder.Callback {
+                    override fun surfaceCreated(h: SurfaceHolder) {
+                        h.removeCallback(this)
+                        view.post { safeSwapView(view) }
+                    }
+                    override fun surfaceChanged(h: SurfaceHolder, fmt: Int, w: Int, ht: Int) {}
+                    override fun surfaceDestroyed(h: SurfaceHolder) {
+                        h.removeCallback(this)
+                    }
+                })
+            }
+        }
+    }
+
+    /**
+     * Safely swap the OpenGlView into the streaming engine and restart preview.
+     * Called only after the surface is confirmed valid.
+     */
+    private fun safeSwapView(view: OpenGlView) {
+        try {
+            streamingService?.initCamera(view, this, streamType)
+            streamingService?.updateOrientation()
+            startPreviewWhenSurfaceReady(view)
+        } catch (e: Exception) {
+            // Swallow GL errors during rapid lock/unlock transitions
+            android.util.Log.w("MainActivity", "safeSwapView error (non-fatal): ${e.message}")
+        }
+    }
+
+    fun clearOpenGlView() {
+        this.openGlView = null
+    }
+}

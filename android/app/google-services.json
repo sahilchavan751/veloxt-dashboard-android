@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "513758443707",
+    "project_id": "live-streaming-tour",
+    "storage_bucket": "live-streaming-tour.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:513758443707:android:be7b0b2e8cfad17f39446d",
+        "android_client_info": {
+          "package_name": "com.custom.srt_stream"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBdIpYQayK8u-jH9lnCk_OQKAnDb3R5_JE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "status": 1
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

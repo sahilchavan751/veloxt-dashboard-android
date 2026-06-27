@@ -1,0 +1,338 @@
+package com.custom.srt_stream
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.os.Binder
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
+import android.os.PowerManager
+import android.view.OrientationEventListener
+import android.view.Surface
+import com.pedro.common.ConnectChecker
+import com.pedro.library.base.Camera2Base
+import com.pedro.library.rtmp.RtmpCamera2
+import com.pedro.library.srt.SrtCamera2
+import com.pedro.library.view.OpenGlView
+import com.pedro.library.view.GlStreamInterface
+import com.pedro.encoder.input.video.CameraHelper
+
+class StreamingForegroundService : Service() {
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var orientationListener: OrientationEventListener? = null
+    private var currentDeviceRotation = 0
+
+    private val binder = LocalBinder()
+
+    companion object {
+        private const val CHANNEL_ID = "SrtStreamingChannel"
+        private const val NOTIFICATION_ID = 8889
+        
+        var camera: Camera2Base? = null
+            private set
+        
+        var isStreaming = false
+            private set
+            
+        var currentUrl: String? = null
+            private set
+
+        fun startService(context: Context) {
+            val intent = Intent(context, StreamingForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun stopService(context: Context) {
+            val intent = Intent(context, StreamingForegroundService::class.java)
+            context.stopService(intent)
+        }
+    }
+
+    inner class LocalBinder : Binder() {
+        fun getService(): StreamingForegroundService = this@StreamingForegroundService
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        acquireLocks()
+        startOrientationListener()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            startForeground(NOTIFICATION_ID, createNotification(), serviceType)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder {
+        return binder
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Live Streaming Service"
+            val descriptionText = "Keeps camera streaming active in the background"
+            val importance = NotificationManager.IMPORTANCE_LOW
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun createNotification(): Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Camera Streaming Node")
+            .setContentText("Broadcasting live video stream...")
+            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
+    }
+
+    var isAudioEnabled = true
+        private set
+
+    private var currentStreamType: String = "rtmp"
+
+    fun initCamera(openGlView: OpenGlView, connectChecker: ConnectChecker, streamType: String = "rtmp") {
+        // If camera exists but the stream type changed, we MUST release and recreate
+        if (camera != null && currentStreamType != streamType) {
+            releaseCamera()
+        }
+
+        if (camera == null) {
+            camera = if (streamType == "srt") {
+                SrtCamera2(openGlView, connectChecker)
+            } else {
+                RtmpCamera2(openGlView, connectChecker)
+            }
+            currentStreamType = streamType
+        } else {
+            try {
+                camera?.replaceView(openGlView)
+            } catch (e: Exception) {
+                // Camera in bad state — recreate it
+                android.util.Log.w("StreamingService", "replaceView failed, recreating camera: ${e.message}")
+                releaseCamera()
+                camera = if (streamType == "srt") {
+                    SrtCamera2(openGlView, connectChecker)
+                } else {
+                    RtmpCamera2(openGlView, connectChecker)
+                }
+                currentStreamType = streamType
+            }
+        }
+        updateOrientation()
+    }
+
+    fun releaseCamera() {
+        try { camera?.stopPreview() } catch (_: Exception) {}
+        try { camera?.stopStream() } catch (_: Exception) {}
+        camera = null
+        isStreaming = false
+        currentUrl = null
+    }
+
+    fun enableAudio() {
+        camera?.enableAudio()
+        isAudioEnabled = true
+    }
+
+    fun disableAudio() {
+        camera?.disableAudio()
+        isAudioEnabled = false
+    }
+
+    fun updateOrientation() {
+        val cam = camera ?: return
+        try {
+            val glInterface = cam.getGlInterface() as? GlStreamInterface
+            glInterface?.autoHandleOrientation = false
+            val rotation = CameraHelper.getCameraOrientation(applicationContext)
+            // Always treat as portrait for preview stability (activity is locked to portrait)
+            // The encoder rotation is handled separately by the orientation listener
+            glInterface?.setCameraOrientation(rotation)
+            glInterface?.setIsPortrait(true)
+        } catch (e: Exception) {
+            // Ignore if GL interface is not initialized yet
+        }
+    }
+
+    /**
+     * Starts an OrientationEventListener to track physical device rotation.
+     * This allows the stream output to rotate correctly for landscape streaming
+     * while the preview stays fixed (no jumping animation).
+     */
+    private fun startOrientationListener() {
+        orientationListener = object : OrientationEventListener(applicationContext) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                // Map orientation degrees to rotation quadrants
+                val newRotation = when {
+                    orientation in 315..360 || orientation in 0..44 -> 0      // Portrait
+                    orientation in 45..134 -> 270   // Landscape (right)
+                    orientation in 135..224 -> 180  // Upside down
+                    orientation in 225..314 -> 90   // Landscape (left)
+                    else -> 0
+                }
+                if (newRotation != currentDeviceRotation) {
+                    currentDeviceRotation = newRotation
+                    applyStreamRotation(newRotation)
+                }
+            }
+        }
+        if (orientationListener?.canDetectOrientation() == true) {
+            orientationListener?.enable()
+        }
+    }
+
+    /**
+     * Applies the rotation to the stream encoder output without affecting the preview.
+     */
+    private fun applyStreamRotation(rotationDegrees: Int) {
+        val cam = camera ?: return
+        try {
+            val glInterface = cam.getGlInterface() as? GlStreamInterface
+            glInterface?.setStreamRotation(rotationDegrees)
+        } catch (e: Exception) {
+            // GL interface may not be ready yet
+        }
+    }
+
+    fun startStream(url: String, width: Int, height: Int, bitrate: Int, fps: Int): String? {
+        val cam = camera ?: return "Camera system is not initialized"
+        if (cam.isStreaming) return null
+        
+        // Prepare video (H.264 Baseline/Main)
+        val videoPrepared: Boolean
+        try {
+            // Enforce 16:9 Landscape output regardless of device orientation
+            val landscapeWidth = maxOf(width, height)
+            val landscapeHeight = minOf(width, height)
+            
+            // Pass rotation 0 to prevent the encoder from swapping dimensions
+            videoPrepared = cam.prepareVideo(landscapeWidth, landscapeHeight, fps, bitrate, 0)
+            if (!videoPrepared) {
+                return "Failed to prepare video encoder (unsupported resolution or bitrate)"
+            }
+        } catch (e: Exception) {
+            return "Video encoder initialization crashed: ${e.localizedMessage}"
+        }
+
+        // Prepare audio (AAC-LC) with echo cancellation and noise suppression
+        // for tight A/V synchronization. Using VOICE_COMMUNICATION pipeline
+        // which has lower latency and better timestamp accuracy.
+        val audioPrepared: Boolean
+        try {
+            audioPrepared = cam.prepareAudio(
+                64 * 1024,   // 64kbps — saves bandwidth on mobile data while retaining clarity
+                44100,       // 44.1kHz sample rate
+                true,        // Stereo
+                true,        // Enable Echo Canceler — forces real-time audio pipeline
+                true         // Enable Noise Suppressor — cleaner audio + tighter sync
+            )
+            if (!audioPrepared) {
+                return "Failed to initialize microphone or configure audio encoder. Please check if the microphone is in use."
+            }
+        } catch (e: Exception) {
+            return "Microphone audio initialization crashed: ${e.localizedMessage}"
+        }
+        
+        try {
+            // CRITICAL: Set audio state BEFORE starting the stream
+            // This ensures audio packets are included from the very first frame,
+            // eliminating the initial audio delay/gap that occurred when audio
+            // was enabled after the stream had already started.
+            if (isAudioEnabled) {
+                cam.enableAudio()
+            } else {
+                cam.disableAudio()
+            }
+            
+            cam.startStream(url)
+            isStreaming = true
+            currentUrl = url
+            updateOrientation()
+            return null
+        } catch (e: Exception) {
+            return "Failed to start connection stream: ${e.localizedMessage}"
+        }
+    }
+
+    fun stopStream() {
+        camera?.stopStream()
+        isStreaming = false
+        currentUrl = null
+    }
+
+    override fun onDestroy() {
+        orientationListener?.disable()
+        orientationListener = null
+        releaseCamera()
+        releaseLocks()
+        super.onDestroy()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun acquireLocks() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SrtStream::WakeLock").apply {
+                acquire(10 * 60 * 1000L /* 10 minutes fallback */)
+            }
+            
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "SrtStream::WifiLock").apply {
+                acquire()
+            }
+        } catch (e: Exception) {
+            // Silently catch lock exceptions
+        }
+    }
+
+    private fun releaseLocks() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+            wakeLock = null
+            
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
+            }
+            wifiLock = null
+        } catch (e: Exception) {
+            // Silently catch lock exceptions
+        }
+    }
+}
