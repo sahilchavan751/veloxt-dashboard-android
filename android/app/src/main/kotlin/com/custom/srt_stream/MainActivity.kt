@@ -51,9 +51,8 @@ class MainActivity : FlutterActivity(), ConnectChecker {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Lock to portrait so the preview stays fullscreen without rotation animation.
-        // The stream output rotation is handled by OrientationEventListener in the service.
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // Allow dynamic orientation switching via Flutter SystemChrome per view
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -224,18 +223,30 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                             android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION
                         ) ?: 0
 
-                        // Determine lens type from focal length
+                        // Automated Camera Lens Detection based on physical specs (Focal Length & Sensor Size)
                         val focalLengths = characteristics.get(
                             android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
                         )
                         val focalLength = focalLengths?.firstOrNull() ?: 0f
+
+                        val sensorSize = characteristics.get(
+                            android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
+                        )
+                        val sensorWidth = sensorSize?.width ?: 0f
+
+                        // Calculate horizontal Field of View (FOV) in degrees
+                        val fovDegrees = if (focalLength > 0f && sensorWidth > 0f) {
+                            val fovRad = 2.0 * Math.atan((sensorWidth / (2.0 * focalLength)).toDouble())
+                            Math.toDegrees(fovRad).toFloat()
+                        } else 0f
+
                         val lensType = when {
                             facing == android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Selfie"
-                            focalLength < 2.0f -> "Ultra Wide"
-                            focalLength in 2.0f..6.0f -> "Wide"
-                            focalLength in 6.0f..15.0f -> "Telephoto"
-                            focalLength > 15.0f -> "Super Telephoto"
-                            else -> "Standard"
+                            facing == android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL -> "External"
+                            fovDegrees >= 94f || (focalLength > 0f && focalLength <= 2.7f) -> "Ultra Wide"
+                            (fovDegrees in 60f..93f) || (focalLength in 2.8f..6.0f) -> "Wide Angle"
+                            (fovDegrees > 0f && fovDegrees < 60f) || focalLength > 6.0f -> "Telephoto"
+                            else -> "Wide Angle"
                         }
 
                         mapOf(
@@ -245,7 +256,9 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                             "maxHeight" to maxHeight.toString(),
                             "hasAutoFocus" to hasAutoFocus.toString(),
                             "sensorOrientation" to sensorOrientation.toString(),
-                            "lensType" to lensType
+                            "lensType" to lensType,
+                            "fovDegrees" to fovDegrees.toInt().toString(),
+                            "focalLength" to String.format(java.util.Locale.US, "%.1f", focalLength)
                         )
                     }
                     result.success(resultList)

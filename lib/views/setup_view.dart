@@ -60,6 +60,93 @@ class _SetupViewState extends State<SetupView> {
     }
   }
 
+  Future<void> _confirmAndDeleteCamera(String camId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFF1E293B), width: 1.2),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 22),
+              SizedBox(width: 8),
+              Text(
+                "Delete Camera ID?",
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: Text(
+            "Are you sure you want to delete camera '$camId'? This action cannot be undone.",
+            style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text("Cancel", style: TextStyle(color: Color(0xFF64748B))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text("Delete", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('active_cameras')
+          .doc(camId)
+          .delete();
+
+      setState(() {
+        _existingCameras.remove(camId);
+        if (_selectedCameraId == camId) {
+          if (_existingCameras.isNotEmpty) {
+            _selectedCameraId = _existingCameras.first;
+          } else {
+            _selectedCameraId = null;
+            _isCreatingNew = true;
+          }
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF10B981),
+            content: Text("Camera ID '$camId' deleted successfully"),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFFEF4444),
+            content: Text("Failed to delete camera: $e"),
+          ),
+        );
+      }
+    }
+  }
+
   String get _resolvedCameraId {
     if (_isCreatingNew) {
       return _newCameraIdController.text.trim().toLowerCase();
@@ -626,99 +713,145 @@ class _SetupViewState extends State<SetupView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          "CAMERA IDENTIFIER",
-          style: TextStyle(
-            fontSize: 10.5,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF94A3B8),
-            letterSpacing: 1.2,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              "CAMERA IDENTIFIER",
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF94A3B8),
+                letterSpacing: 1.2,
+              ),
+            ),
+            if (_selectedCameraId != null && !_isCreatingNew)
+              GestureDetector(
+                onTap: () => _confirmAndDeleteCamera(_selectedCameraId!),
+                child: const Row(
+                  children: [
+                    Icon(Icons.delete_outline_rounded, size: 14, color: Color(0xFFEF4444)),
+                    SizedBox(width: 4),
+                    Text(
+                      "Delete CamID",
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFFEF4444),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          initialValue: _selectedCameraId,
-          isExpanded: true,
-          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-          dropdownColor: const Color(0xFF0F172A),
-          style: const TextStyle(fontSize: 14, color: Colors.white),
-          decoration: const InputDecoration(
-            filled: true,
-            fillColor: Color(0xFF0F172A),
-            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.2),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.2),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.all(Radius.circular(12)),
-              borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.5),
-            ),
-          ),
-          items: [
-            ..._existingCameras.map((camId) {
-              return DropdownMenuItem<String>(
-                value: camId,
-                child: Text(
-                  camId,
-                  style: const TextStyle(fontSize: 14, color: Colors.white),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                initialValue: _selectedCameraId,
+                isExpanded: true,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
+                dropdownColor: const Color(0xFF0F172A),
+                style: const TextStyle(fontSize: 14, color: Colors.white),
+                decoration: const InputDecoration(
+                  filled: true,
+                  fillColor: Color(0xFF0F172A),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                    borderSide: BorderSide.none,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                    borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.2),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                    borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
+                  ),
+                  errorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                    borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.2),
+                  ),
+                  focusedErrorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(12)),
+                    borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.5),
+                  ),
                 ),
-              );
-            }),
-            DropdownMenuItem<String>(
-              enabled: false,
-              value: '__divider__',
-              child: Divider(color: Colors.white.withValues(alpha: 0.08), height: 1),
-            ),
-            const DropdownMenuItem<String>(
-              value: '__new__',
-              child: Row(
-                children: [
-                  Icon(Icons.add_circle_outline_rounded, size: 18, color: Color(0xFF10B981)),
-                  SizedBox(width: 8),
-                  Text(
-                    "New Camera ID",
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Color(0xFF10B981),
-                      fontWeight: FontWeight.w600,
+                items: [
+                  ..._existingCameras.map((camId) {
+                    return DropdownMenuItem<String>(
+                      value: camId,
+                      child: Text(
+                        camId,
+                        style: const TextStyle(fontSize: 14, color: Colors.white),
+                      ),
+                    );
+                  }),
+                  DropdownMenuItem<String>(
+                    enabled: false,
+                    value: '__divider__',
+                    child: Divider(color: Colors.white.withValues(alpha: 0.08), height: 1),
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: '__new__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.add_circle_outline_rounded, size: 18, color: Color(0xFF10B981)),
+                        SizedBox(width: 8),
+                        Text(
+                          "New Camera ID",
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF10B981),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
+                onChanged: (value) {
+                  if (value == '__new__') {
+                    setState(() {
+                      _isCreatingNew = true;
+                      _selectedCameraId = null;
+                    });
+                  } else if (value != '__divider__' && value != null) {
+                    setState(() {
+                      _selectedCameraId = value;
+                    });
+                  }
+                },
+                validator: (value) {
+                  if (_isCreatingNew) return null;
+                  if (value == null || value.isEmpty || value == '__divider__' || value == '__new__') {
+                    return "Select an active camera ID";
+                  }
+                  return null;
+                },
               ),
             ),
+            if (_selectedCameraId != null && !_isCreatingNew) ...[
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: () => _confirmAndDeleteCamera(_selectedCameraId!),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  height: 50,
+                  width: 50,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4), width: 1.2),
+                  ),
+                  child: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                ),
+              ),
+            ],
           ],
-          onChanged: (value) {
-            if (value == '__new__') {
-              setState(() {
-                _isCreatingNew = true;
-                _selectedCameraId = null;
-              });
-            } else if (value != '__divider__' && value != null) {
-              setState(() {
-                _selectedCameraId = value;
-              });
-            }
-          },
-          validator: (value) {
-            if (_isCreatingNew) return null;
-            if (value == null || value.isEmpty || value == '__divider__' || value == '__new__') {
-              return "Select an active camera ID";
-            }
-            return null;
-          },
         ),
       ],
     );

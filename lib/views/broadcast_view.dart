@@ -73,10 +73,16 @@ class _BroadcastViewState extends State<BroadcastView> {
   DateTime? _streamStartTime;
   DateTime _lastBitrateUpdateTime = DateTime.now();
   bool _isStoppingStream = false;
+  bool _isReconnecting = false;
 
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
     _telemetryNotifier = ValueNotifier<TelemetryState>(TelemetryState(
       elapsedTime: Duration.zero,
       currentBitrateKbps: 0,
@@ -117,15 +123,46 @@ class _BroadcastViewState extends State<BroadcastView> {
             'maxHeight': map['maxHeight']?.toString() ?? '0',
             'hasAutoFocus': map['hasAutoFocus']?.toString() ?? 'false',
             'sensorOrientation': map['sensorOrientation']?.toString() ?? '0',
-            'lensType': map['lensType']?.toString() ?? 'Standard',
+            'lensType': map['lensType']?.toString() ?? 'Wide Angle',
+            'fovDegrees': map['fovDegrees']?.toString() ?? '0',
+            'focalLength': map['focalLength']?.toString() ?? '0',
           };
         }).toList();
+
         if (_availableCameras.isNotEmpty) {
-          final backCam = _availableCameras.firstWhere(
-            (c) => c['facing']?.toLowerCase() == 'back',
-            orElse: () => _availableCameras.first,
-          );
-          _selectedCameraId = backCam['id'];
+          // Auto camera lens detector selection strategy:
+          // 1. First choice: Back camera with "Wide Angle" lens
+          Map<String, String>? autoDetectedCam;
+          try {
+            autoDetectedCam = _availableCameras.firstWhere(
+              (c) => c['facing']?.toLowerCase() == 'back' &&
+                  (c['lensType']?.toLowerCase().contains('wide angle') == true ||
+                   c['lensType']?.toLowerCase() == 'wide'),
+            );
+          } catch (_) {}
+
+          // 2. Fallback: Back camera with "Ultra Wide" lens if Wide Angle not found
+          if (autoDetectedCam == null) {
+            try {
+              autoDetectedCam = _availableCameras.firstWhere(
+                (c) => c['facing']?.toLowerCase() == 'back' &&
+                    c['lensType']?.toLowerCase().contains('ultra wide') == true,
+              );
+            } catch (_) {}
+          }
+
+          // 3. Fallback: Any back camera
+          if (autoDetectedCam == null) {
+            try {
+              autoDetectedCam = _availableCameras.firstWhere(
+                (c) => c['facing']?.toLowerCase() == 'back',
+              );
+            } catch (_) {}
+          }
+
+          // 4. Ultimate fallback: First available camera
+          autoDetectedCam ??= _availableCameras.first;
+          _selectedCameraId = autoDetectedCam['id'];
         }
       }
     } catch (e) {
@@ -261,7 +298,8 @@ class _BroadcastViewState extends State<BroadcastView> {
   }
 
   Future<void> _handleStreamFreeze() async {
-    if (!_isStreamingNotifier.value) return;
+    if (!_isStreamingNotifier.value || _isReconnecting) return;
+    _isReconnecting = true;
     
     _updateStatusText("Reconnecting...");
     _isConnectingNotifier.value = true;
@@ -276,8 +314,12 @@ class _BroadcastViewState extends State<BroadcastView> {
     } catch (_) {}
 
     await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
+    if (!mounted) {
+      _isReconnecting = false;
+      return;
+    }
     
+    _isReconnecting = false;
     _isConnectingNotifier.value = false;
     _toggleStream();
   }
@@ -446,11 +488,12 @@ class _BroadcastViewState extends State<BroadcastView> {
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
-                subtitle: Row(
+                subtitle: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      margin: const EdgeInsets.only(right: 6),
                       decoration: BoxDecoration(
                         color: const Color(0xFF1E293B),
                         borderRadius: BorderRadius.circular(4),
@@ -460,6 +503,18 @@ class _BroadcastViewState extends State<BroadcastView> {
                         style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600),
                       ),
                     ),
+                    if (camera['fovDegrees'] != null && camera['fovDegrees'] != '0')
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          "${camera['fovDegrees']}° FOV",
+                          style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     if (hasAF)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -565,6 +620,9 @@ class _BroadcastViewState extends State<BroadcastView> {
 
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
     _uptimeTimer?.cancel();
     _batteryTimer?.cancel();
     _connectionTimeoutTimer?.cancel();
@@ -980,6 +1038,7 @@ class _BroadcastViewState extends State<BroadcastView> {
   void _showSettingsPanel() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF0F172A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -989,210 +1048,213 @@ class _BroadcastViewState extends State<BroadcastView> {
           builder: (context, setModalState) {
             final isStreamingLive = _isStreamingNotifier.value;
             
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    "Stream Configuration",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      "Stream Configuration",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  
-                  // Bitrate Configuration
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        "Target Bitrate",
-                        style: TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                    const SizedBox(height: 24),
+                    
+                    // Bitrate Configuration
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          "Target Bitrate",
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      Text(
-                        "$_bitrateKbps kbps",
-                        style: const TextStyle(
-                          color: Color(0xFF10B981),
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
+                        Text(
+                          "$_bitrateKbps kbps",
+                          style: const TextStyle(
+                            color: Color(0xFF10B981),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: _bitrateKbps.toDouble(),
-                    min: 200,
-                    max: 15000,
-                    divisions: 148,
-                    activeColor: const Color(0xFF10B981),
-                    inactiveColor: const Color(0xFF1E293B),
-                    onChanged: isStreamingLive
-                        ? null
-                        : (val) {
-                            setModalState(() {
-                              _bitrateKbps = val.round();
-                            });
-                            setState(() {
-                              _bitrateKbps = val.round();
-                            });
-                            _initNativeStream();
-                          },
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Quality (Resolution) Configuration
-                  const Text(
-                    "Video Resolution",
-                    style: TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: _resolutionLabel,
-                    dropdownColor: const Color(0xFF0F172A),
-                    style: const TextStyle(color: Colors.white, fontSize: 13.5),
-                    decoration: const InputDecoration(
-                      filled: true,
-                      fillColor: Color(0xFF050811),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.2),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                        borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
-                      ),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: "4K (UHD)",
-                        child: Text("4K (3840x2160) @ 30fps"),
-                      ),
-                      DropdownMenuItem(
-                        value: "1080p (FHD)",
-                        child: Text("1080p (1920x1080) @ 30fps"),
-                      ),
-                      DropdownMenuItem(
-                        value: "720p (HD)",
-                        child: Text("720p (1280x720) @ 30fps"),
-                      ),
-                      DropdownMenuItem(
-                        value: "480p (SD)",
-                        child: Text("480p (854x480) @ 30fps"),
-                      ),
-                      DropdownMenuItem(
-                        value: "360p (Low)",
-                        child: Text("360p (640x360) @ 24fps"),
-                      ),
-                      DropdownMenuItem(
-                        value: "240p (Ultra Low)",
-                        child: Text("240p (426x240) @ 15fps — Mobile Data"),
-                      ),
-                    ],
-                    onChanged: isStreamingLive
-                        ? null
-                        : (val) {
-                            if (val != null) {
+                    Slider(
+                      value: _bitrateKbps.toDouble(),
+                      min: 200,
+                      max: 15000,
+                      divisions: 148,
+                      activeColor: const Color(0xFF10B981),
+                      inactiveColor: const Color(0xFF1E293B),
+                      onChanged: isStreamingLive
+                          ? null
+                          : (val) {
                               setModalState(() {
-                                _resolutionLabel = val;
-                                if (val.startsWith("4K")) {
-                                  _width = 3840;
-                                  _height = 2160;
-                                  _bitrateKbps = 10000;
-                                  _fps = 30;
-                                } else if (val.startsWith("1080p")) {
-                                  _width = 1920;
-                                  _height = 1080;
-                                  _bitrateKbps = 4000;
-                                  _fps = 30;
-                                } else if (val.startsWith("720p")) {
-                                  _width = 1280;
-                                  _height = 720;
-                                  _bitrateKbps = 2000;
-                                  _fps = 30;
-                                } else if (val.startsWith("480p")) {
-                                  _width = 854;
-                                  _height = 480;
-                                  _bitrateKbps = 1000;
-                                  _fps = 30;
-                                } else if (val.startsWith("360p")) {
-                                  _width = 640;
-                                  _height = 360;
-                                  _bitrateKbps = 500;
-                                  _fps = 24;
-                                } else {
-                                  _width = 426;
-                                  _height = 240;
-                                  _bitrateKbps = 250;
-                                  _fps = 15;
-                                }
+                                _bitrateKbps = val.round();
                               });
                               setState(() {
-                                _resolutionLabel = val;
-                                if (val.startsWith("4K")) {
-                                  _width = 3840;
-                                  _height = 2160;
-                                  _bitrateKbps = 10000;
-                                  _fps = 30;
-                                } else if (val.startsWith("1080p")) {
-                                  _width = 1920;
-                                  _height = 1080;
-                                  _bitrateKbps = 4000;
-                                  _fps = 30;
-                                } else if (val.startsWith("720p")) {
-                                  _width = 1280;
-                                  _height = 720;
-                                  _bitrateKbps = 2000;
-                                  _fps = 30;
-                                } else if (val.startsWith("480p")) {
-                                  _width = 854;
-                                  _height = 480;
-                                  _bitrateKbps = 1000;
-                                  _fps = 30;
-                                } else if (val.startsWith("360p")) {
-                                  _width = 640;
-                                  _height = 360;
-                                  _bitrateKbps = 500;
-                                  _fps = 24;
-                                } else {
-                                  _width = 426;
-                                  _height = 240;
-                                  _bitrateKbps = 250;
-                                  _fps = 15;
-                                }
+                                _bitrateKbps = val.round();
                               });
                               _initNativeStream();
-                            }
-                          },
-                  ),
-                  if (isStreamingLive) ...[
-                    const SizedBox(height: 16),
+                            },
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Quality (Resolution) Configuration
                     const Text(
-                      "* Resolution & bitrate are locked while live",
+                      "Video Resolution",
                       style: TextStyle(
-                        color: Color(0xFFEF4444),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF64748B),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      initialValue: _resolutionLabel,
+                      dropdownColor: const Color(0xFF0F172A),
+                      isExpanded: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                      decoration: const InputDecoration(
+                        filled: true,
+                        fillColor: Color(0xFF050811),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.2),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
+                          borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
+                        ),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: "4K (UHD)",
+                          child: Text("4K (3840x2160) @ 30fps", overflow: TextOverflow.ellipsis),
+                        ),
+                        DropdownMenuItem(
+                          value: "1080p (FHD)",
+                          child: Text("1080p (1920x1080) @ 30fps", overflow: TextOverflow.ellipsis),
+                        ),
+                        DropdownMenuItem(
+                          value: "720p (HD)",
+                          child: Text("720p (1280x720) @ 30fps", overflow: TextOverflow.ellipsis),
+                        ),
+                        DropdownMenuItem(
+                          value: "480p (SD)",
+                          child: Text("480p (854x480) @ 30fps", overflow: TextOverflow.ellipsis),
+                        ),
+                        DropdownMenuItem(
+                          value: "360p (Low)",
+                          child: Text("360p (640x360) @ 24fps", overflow: TextOverflow.ellipsis),
+                        ),
+                        DropdownMenuItem(
+                          value: "240p (Ultra Low)",
+                          child: Text("240p (426x240) @ 15fps", overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                      onChanged: isStreamingLive
+                          ? null
+                          : (val) {
+                              if (val != null) {
+                                setModalState(() {
+                                  _resolutionLabel = val;
+                                  if (val.startsWith("4K")) {
+                                    _width = 3840;
+                                    _height = 2160;
+                                    _bitrateKbps = 10000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("1080p")) {
+                                    _width = 1920;
+                                    _height = 1080;
+                                    _bitrateKbps = 4000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("720p")) {
+                                    _width = 1280;
+                                    _height = 720;
+                                    _bitrateKbps = 2000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("480p")) {
+                                    _width = 854;
+                                    _height = 480;
+                                    _bitrateKbps = 1000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("360p")) {
+                                    _width = 640;
+                                    _height = 360;
+                                    _bitrateKbps = 500;
+                                    _fps = 24;
+                                  } else {
+                                    _width = 426;
+                                    _height = 240;
+                                    _bitrateKbps = 250;
+                                    _fps = 15;
+                                  }
+                                });
+                                setState(() {
+                                  _resolutionLabel = val;
+                                  if (val.startsWith("4K")) {
+                                    _width = 3840;
+                                    _height = 2160;
+                                    _bitrateKbps = 10000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("1080p")) {
+                                    _width = 1920;
+                                    _height = 1080;
+                                    _bitrateKbps = 4000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("720p")) {
+                                    _width = 1280;
+                                    _height = 720;
+                                    _bitrateKbps = 2000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("480p")) {
+                                    _width = 854;
+                                    _height = 480;
+                                    _bitrateKbps = 1000;
+                                    _fps = 30;
+                                  } else if (val.startsWith("360p")) {
+                                    _width = 640;
+                                    _height = 360;
+                                    _bitrateKbps = 500;
+                                    _fps = 24;
+                                  } else {
+                                    _width = 426;
+                                    _height = 240;
+                                    _bitrateKbps = 250;
+                                    _fps = 15;
+                                  }
+                                });
+                                _initNativeStream();
+                              }
+                            },
+                    ),
+                    if (isStreamingLive) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        "* Resolution & bitrate are locked while live",
+                        style: TextStyle(
+                          color: Color(0xFFEF4444),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             );
           },

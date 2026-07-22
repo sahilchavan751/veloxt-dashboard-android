@@ -29,7 +29,7 @@ class StreamingForegroundService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var orientationListener: OrientationEventListener? = null
-    private var currentDeviceRotation = 0
+    private var currentDeviceRotation = 270
 
     private val binder = LocalBinder()
 
@@ -177,12 +177,7 @@ class StreamingForegroundService : Service() {
         val cam = camera ?: return
         try {
             val glInterface = cam.getGlInterface() as? GlStreamInterface
-            glInterface?.autoHandleOrientation = false
-            val rotation = CameraHelper.getCameraOrientation(applicationContext)
-            // Always treat as portrait for preview stability (activity is locked to portrait)
-            // The encoder rotation is handled separately by the orientation listener
-            glInterface?.setCameraOrientation(rotation)
-            glInterface?.setIsPortrait(true)
+            glInterface?.autoHandleOrientation = true
         } catch (e: Exception) {
             // Ignore if GL interface is not initialized yet
         }
@@ -190,20 +185,17 @@ class StreamingForegroundService : Service() {
 
     /**
      * Starts an OrientationEventListener to track physical device rotation.
-     * This allows the stream output to rotate correctly for landscape streaming
-     * while the preview stays fixed (no jumping animation).
+     * Restricts camera stream output rotation to landscape modes only (90 or 270).
      */
     private fun startOrientationListener() {
         orientationListener = object : OrientationEventListener(applicationContext) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-                // Map orientation degrees to rotation quadrants
+                // Restrict stream rotation strictly to landscape modes (90 or 270 degrees)
                 val newRotation = when {
-                    orientation in 315..360 || orientation in 0..44 -> 0      // Portrait
                     orientation in 45..134 -> 270   // Landscape (right)
-                    orientation in 135..224 -> 180  // Upside down
                     orientation in 225..314 -> 90   // Landscape (left)
-                    else -> 0
+                    else -> if (currentDeviceRotation == 90) 90 else 270 // Lock to landscape
                 }
                 if (newRotation != currentDeviceRotation) {
                     currentDeviceRotation = newRotation
@@ -249,17 +241,18 @@ class StreamingForegroundService : Service() {
             return "Video encoder initialization crashed: ${e.localizedMessage}"
         }
 
-        // Prepare audio (AAC-LC) with echo cancellation and noise suppression
-        // for tight A/V synchronization. Using VOICE_COMMUNICATION pipeline
-        // which has lower latency and better timestamp accuracy.
+        // Prepare audio (AAC-LC) — optimized for low-latency live streaming.
+        // 48kHz mono eliminates the sample-rate conversion that 44.1kHz causes
+        // on most Android hardware (native DSP runs at 48kHz), which is the
+        // primary source of the ~200ms audio delay.
         val audioPrepared: Boolean
         try {
             audioPrepared = cam.prepareAudio(
-                64 * 1024,   // 64kbps — saves bandwidth on mobile data while retaining clarity
-                44100,       // 44.1kHz sample rate
-                true,        // Stereo
-                true,        // Enable Echo Canceler — forces real-time audio pipeline
-                true         // Enable Noise Suppressor — cleaner audio + tighter sync
+                128 * 1024,  // 128kbps — good clarity for mono voice/ambient
+                48000,       // 48kHz — matches native Android audio HAL, zero resampling
+                false,       // Mono — halves audio processing load, no perceptible loss in streams
+                false,       // Echo Canceler OFF — not needed for broadcast (no speaker feedback)
+                true         // Noise Suppressor ON — cleaner field audio without latency cost
             )
             if (!audioPrepared) {
                 return "Failed to initialize microphone or configure audio encoder. Please check if the microphone is in use."
@@ -269,7 +262,7 @@ class StreamingForegroundService : Service() {
         }
         
         try {
-            // CRITICAL: Set audio state BEFORE starting the stream
+            // CRITICAL: Set audio state BEFORE starting the stream.
             // This ensures audio packets are included from the very first frame,
             // eliminating the initial audio delay/gap that occurred when audio
             // was enabled after the stream had already started.
@@ -278,7 +271,7 @@ class StreamingForegroundService : Service() {
             } else {
                 cam.disableAudio()
             }
-            
+
             cam.startStream(url)
             isStreaming = true
             currentUrl = url
