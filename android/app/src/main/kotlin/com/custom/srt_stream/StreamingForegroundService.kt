@@ -16,7 +16,9 @@ import android.net.wifi.WifiManager
 import android.os.PowerManager
 import android.view.OrientationEventListener
 import android.view.Surface
+import android.media.MediaRecorder
 import com.pedro.common.ConnectChecker
+import com.pedro.encoder.TimestampMode
 import com.pedro.library.base.Camera2Base
 import com.pedro.library.rtmp.RtmpCamera2
 import com.pedro.library.srt.SrtCamera2
@@ -152,6 +154,9 @@ class StreamingForegroundService : Service() {
                 currentStreamType = streamType
             }
         }
+        // BUFFER mode: timestamps derived from exact buffer durations (21.33ms audio / 33.33ms video)
+        // instead of System.nanoTime(), eliminating OpenGL pipeline delay offset between A/V tracks
+        camera?.setTimestampMode(TimestampMode.BUFFER, TimestampMode.BUFFER)
         updateOrientation()
     }
 
@@ -224,7 +229,11 @@ class StreamingForegroundService : Service() {
     fun startStream(url: String, width: Int, height: Int, bitrate: Int, fps: Int): String? {
         val cam = camera ?: return "Camera system is not initialized"
         if (cam.isStreaming) return null
-        
+
+        // Enforce deterministic buffer-based timestamps for frame-perfect AV sync.
+        // Must be called before prepareVideo/prepareAudio per RootEncoder docs.
+        cam.setTimestampMode(TimestampMode.BUFFER, TimestampMode.BUFFER)
+
         // Prepare video (H.264 Baseline/Main)
         val videoPrepared: Boolean
         try {
@@ -232,8 +241,8 @@ class StreamingForegroundService : Service() {
             val landscapeWidth = maxOf(width, height)
             val landscapeHeight = minOf(width, height)
             
-            // Pass rotation 0 to prevent the encoder from swapping dimensions
-            videoPrepared = cam.prepareVideo(landscapeWidth, landscapeHeight, fps, bitrate, 0)
+            // Pass 1-second iFrameInterval (GOP keyframe) to prevent macroblock blur during fast motion
+            videoPrepared = cam.prepareVideo(landscapeWidth, landscapeHeight, fps, bitrate, 1 /* iFrameInterval */, 0 /* rotation */)
             if (!videoPrepared) {
                 return "Failed to prepare video encoder (unsupported resolution or bitrate)"
             }
@@ -241,24 +250,42 @@ class StreamingForegroundService : Service() {
             return "Video encoder initialization crashed: ${e.localizedMessage}"
         }
 
-        // Prepare audio (AAC-LC) — optimized for low-latency live streaming.
-        // 48kHz mono eliminates the sample-rate conversion that 44.1kHz causes
-        // on most Android hardware (native DSP runs at 48kHz), which is the
-        // primary source of the ~200ms audio delay.
-        val audioPrepared: Boolean
+        // Prepare audio (AAC-LC) — zero-latency configuration with exact RootEncoder API parameter order:
+        // RootEncoder prepareAudio signature: (audioSource: Int, bitrate: Int, sampleRate: Int, isStereo: Boolean, echoCanceler: Boolean, noiseSuppressor: Boolean)
+        // 1. Try CAMCORDER (5) for hardware-level camera mic AV sync on physical devices.
+        // 2. Fall back to DEFAULT (0) if CAMCORDER is not exposed by virtual audio HAL (e.g., emulators).
+        // - 128 * 1024 (128kbps AAC): High quality broadcast audio
+        // - 48000 (48kHz): Matches native Android Audio HAL (zero resampling latency)
+        // - isStereo = false (Mono): Eliminates stereo buffer overhead
+        // - echoCanceler = false: No echo processing delay
+        // - noiseSuppressor = false: CRITICAL — bypasses Android Audio HAL DSP buffer (~200ms framing delay)
+        var audioPrepared = false
         try {
             audioPrepared = cam.prepareAudio(
-                128 * 1024,  // 128kbps — good clarity for mono voice/ambient
-                48000,       // 48kHz — matches native Android audio HAL, zero resampling
-                false,       // Mono — halves audio processing load, no perceptible loss in streams
-                false,       // Echo Canceler OFF — not needed for broadcast (no speaker feedback)
-                true         // Noise Suppressor ON — cleaner field audio without latency cost
+                MediaRecorder.AudioSource.CAMCORDER, // 1st arg: CAMCORDER mic array for hardware AV sync
+                128 * 1024,                          // 2nd arg: bitrate (128kbps)
+                48000,                               // 3rd arg: sampleRate (48kHz)
+                false,                               // 4th arg: isStereo (false)
+                false,                               // 5th arg: echoCanceler (false)
+                false                                // 6th arg: noiseSuppressor (false)
             )
-            if (!audioPrepared) {
-                return "Failed to initialize microphone or configure audio encoder. Please check if the microphone is in use."
-            }
-        } catch (e: Exception) {
-            return "Microphone audio initialization crashed: ${e.localizedMessage}"
+        } catch (_: Exception) {}
+
+        if (!audioPrepared) {
+            try {
+                audioPrepared = cam.prepareAudio(
+                    MediaRecorder.AudioSource.DEFAULT,   // Fallback: DEFAULT audio input
+                    128 * 1024,
+                    48000,
+                    false,
+                    false,
+                    false
+                )
+            } catch (_: Exception) {}
+        }
+
+        if (!audioPrepared) {
+            return "Failed to initialize microphone or configure audio encoder. Please check if the microphone is in use."
         }
         
         try {

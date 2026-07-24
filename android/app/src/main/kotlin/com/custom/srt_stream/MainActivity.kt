@@ -51,6 +51,8 @@ class MainActivity : FlutterActivity(), ConnectChecker {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Keep screen permanently awake while the app is active
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Allow dynamic orientation switching via Flutter SystemChrome per view
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
@@ -181,85 +183,76 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                     result.success(true)
                 }
             }
+            "setZoom" -> {
+                val zoom = call.argument<Double>("zoom")?.toFloat() ?: 1.0f
+                if (isBound && streamingService != null) {
+                    val camera = StreamingForegroundService.camera
+                    if (camera != null) {
+                        try {
+                            camera.setZoom(zoom)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("ZOOM_ERROR", e.message, null)
+                        }
+                    } else {
+                        result.error("CAMERA_NULL", "Camera is not initialized", null)
+                    }
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "getZoomRange" -> {
+                if (isBound && streamingService != null) {
+                    val camera = StreamingForegroundService.camera
+                    if (camera != null) {
+                        try {
+                            val range = camera.zoomRange
+                            result.success(mapOf(
+                                "min" to (range?.lower ?: 1.0f).toDouble(),
+                                "max" to (range?.upper ?: 10.0f).toDouble()
+                            ))
+                        } catch (_: Exception) {
+                            result.success(mapOf("min" to 1.0, "max" to 10.0))
+                        }
+                    } else {
+                        result.success(mapOf("min" to 1.0, "max" to 10.0))
+                    }
+                } else {
+                    result.success(mapOf("min" to 1.0, "max" to 10.0))
+                }
+            }
             "getAvailableCameras" -> {
                 try {
                     val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-                    val resultList = cameraManager.cameraIdList.map { id ->
-                        val characteristics = cameraManager.getCameraCharacteristics(id)
-                        val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
-                        val facingStr = when (facing) {
-                            android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Front"
-                            android.hardware.camera2.CameraMetadata.LENS_FACING_BACK -> "Back"
-                            android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL -> "External"
-                            else -> "Unknown"
-                        }
+                    val resultList = mutableListOf<Map<String, String>>()
+                    val processedIds = mutableSetOf<String>()
 
-                        // Get max supported resolution
-                        val streamConfigMap = characteristics.get(
-                            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
-                        )
-                        val outputSizes = streamConfigMap?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
-                        var maxWidth = 0
-                        var maxHeight = 0
-                        outputSizes?.forEach { size ->
-                            if (size.width * size.height > maxWidth * maxHeight) {
-                                maxWidth = size.width
-                                maxHeight = size.height
+                    for (id in cameraManager.cameraIdList) {
+                        val characteristics = cameraManager.getCameraCharacteristics(id)
+                        
+                        // On Android P (API 28+), inspect physical camera IDs behind logical multi-cameras
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                            val physicalCameraIds = characteristics.physicalCameraIds
+                            if (physicalCameraIds.isNotEmpty()) {
+                                for (physicalId in physicalCameraIds) {
+                                    if (!processedIds.contains(physicalId)) {
+                                        try {
+                                            val physDetails = extractCameraDetails(cameraManager, physicalId, isPhysical = true)
+                                            resultList.add(physDetails)
+                                            processedIds.add(physicalId)
+                                        } catch (_: Exception) {}
+                                    }
+                                }
                             }
                         }
 
-                        // Check autofocus support
-                        val afModes = characteristics.get(
-                            android.hardware.camera2.CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
-                        )
-                        val hasAutoFocus = afModes?.any {
-                            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_AUTO ||
-                            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO ||
-                            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                        } ?: false
-
-                        // Get sensor orientation
-                        val sensorOrientation = characteristics.get(
-                            android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION
-                        ) ?: 0
-
-                        // Automated Camera Lens Detection based on physical specs (Focal Length & Sensor Size)
-                        val focalLengths = characteristics.get(
-                            android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
-                        )
-                        val focalLength = focalLengths?.firstOrNull() ?: 0f
-
-                        val sensorSize = characteristics.get(
-                            android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
-                        )
-                        val sensorWidth = sensorSize?.width ?: 0f
-
-                        // Calculate horizontal Field of View (FOV) in degrees
-                        val fovDegrees = if (focalLength > 0f && sensorWidth > 0f) {
-                            val fovRad = 2.0 * Math.atan((sensorWidth / (2.0 * focalLength)).toDouble())
-                            Math.toDegrees(fovRad).toFloat()
-                        } else 0f
-
-                        val lensType = when {
-                            facing == android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Selfie"
-                            facing == android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL -> "External"
-                            fovDegrees >= 94f || (focalLength > 0f && focalLength <= 2.7f) -> "Ultra Wide"
-                            (fovDegrees in 60f..93f) || (focalLength in 2.8f..6.0f) -> "Wide Angle"
-                            (fovDegrees > 0f && fovDegrees < 60f) || focalLength > 6.0f -> "Telephoto"
-                            else -> "Wide Angle"
+                        if (!processedIds.contains(id)) {
+                            try {
+                                val details = extractCameraDetails(cameraManager, id, isPhysical = false)
+                                resultList.add(details)
+                                processedIds.add(id)
+                            } catch (_: Exception) {}
                         }
-
-                        mapOf(
-                            "id" to id,
-                            "facing" to facingStr,
-                            "maxWidth" to maxWidth.toString(),
-                            "maxHeight" to maxHeight.toString(),
-                            "hasAutoFocus" to hasAutoFocus.toString(),
-                            "sensorOrientation" to sensorOrientation.toString(),
-                            "lensType" to lensType,
-                            "fovDegrees" to fovDegrees.toInt().toString(),
-                            "focalLength" to String.format(java.util.Locale.US, "%.1f", focalLength)
-                        )
                     }
                     result.success(resultList)
                 } catch (e: Exception) {
@@ -270,6 +263,89 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                 result.notImplemented()
             }
         }
+    }
+
+    private fun extractCameraDetails(
+        cameraManager: android.hardware.camera2.CameraManager,
+        id: String,
+        isPhysical: Boolean
+    ): Map<String, String> {
+        val characteristics = cameraManager.getCameraCharacteristics(id)
+        val facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+        val facingStr = when (facing) {
+            android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Front"
+            android.hardware.camera2.CameraMetadata.LENS_FACING_BACK -> "Back"
+            android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL -> "External"
+            else -> "Unknown"
+        }
+
+        // Get max supported resolution
+        val streamConfigMap = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+        )
+        val outputSizes = streamConfigMap?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+        var maxWidth = 0
+        var maxHeight = 0
+        outputSizes?.forEach { size ->
+            if (size.width * size.height > maxWidth * maxHeight) {
+                maxWidth = size.width
+                maxHeight = size.height
+            }
+        }
+
+        // Check autofocus support
+        val afModes = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES
+        )
+        val hasAutoFocus = afModes?.any {
+            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_AUTO ||
+            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO ||
+            it == android.hardware.camera2.CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+        } ?: false
+
+        // Get sensor orientation
+        val sensorOrientation = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION
+        ) ?: 0
+
+        // Automated Camera Lens Detection based on physical specs (Focal Length & Sensor Size)
+        val focalLengths = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+        )
+        val focalLength = focalLengths?.firstOrNull() ?: 0f
+
+        val sensorSize = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE
+        )
+        val sensorWidth = sensorSize?.width ?: 0f
+
+        // Calculate horizontal Field of View (FOV) in degrees
+        val fovDegrees = if (focalLength > 0f && sensorWidth > 0f) {
+            val fovRad = 2.0 * Math.atan((sensorWidth / (2.0 * focalLength)).toDouble())
+            Math.toDegrees(fovRad).toFloat()
+        } else 0f
+
+        val lensType = when {
+            facing == android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT -> "Selfie"
+            facing == android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL -> "External USB Webcam"
+            fovDegrees >= 94f || (focalLength > 0f && focalLength <= 2.7f) -> "Ultra Wide"
+            (fovDegrees in 60f..93f) || (focalLength in 2.8f..6.0f) -> "Main Wide (64MP/Primary)"
+            (fovDegrees > 0f && fovDegrees < 60f) || focalLength > 6.0f -> "Telephoto"
+            else -> "Wide Angle"
+        }
+
+        return mapOf(
+            "id" to id,
+            "facing" to facingStr,
+            "maxWidth" to maxWidth.toString(),
+            "maxHeight" to maxHeight.toString(),
+            "hasAutoFocus" to hasAutoFocus.toString(),
+            "sensorOrientation" to sensorOrientation.toString(),
+            "lensType" to lensType,
+            "fovDegrees" to fovDegrees.toInt().toString(),
+            "focalLength" to String.format(java.util.Locale.US, "%.1f", focalLength),
+            "isPhysical" to isPhysical.toString()
+        )
     }
 
     private fun startPreviewWhenSurfaceReady(view: OpenGlView) {

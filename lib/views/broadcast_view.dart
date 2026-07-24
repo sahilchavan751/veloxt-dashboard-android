@@ -44,29 +44,36 @@ class _BroadcastViewState extends State<BroadcastView> {
   static const MethodChannel _channel = MethodChannel('com.custom.srt_stream/control');
   final Battery _battery = Battery();
 
-  // Color constants optimized for high-readability overlays
-  static const Color _overlayDarkTop = Color(0x99050811);
-  static const Color _overlayDarkBottom = Color(0xB3050811);
-  static const Color _hudBgColor = Color(0xD90F172A); // Slate dark, 85% opacity
+  // Premium glassmorphic color palette
+  static const Color _overlayDarkTop = Color(0xAA050811);
+  static const Color _overlayDarkBottom = Color(0xC8050811);
+  static const Color _hudBgColor = Color(0xE60F172A); // Slate dark 90%
   static const Color _hudBorderColor = Color(0xFF1E293B);
-  static const Color _buttonBgColor = Color(0xCC0F172A);
+  static const Color _buttonBgColor = Color(0xD90F172A);
   static const Color _buttonBorderColor = Color(0x33FFFFFF);
-  
+
   bool _isNativeInitialized = false;
-  
+
   final ValueNotifier<bool> _isStreamingNotifier = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _isConnectingNotifier = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _isMicMutedNotifier = ValueNotifier<bool>(false);
   late final ValueNotifier<TelemetryState> _telemetryNotifier;
 
-  int _bitrateKbps = 2000;
-  String _resolutionLabel = "720p (HD)";
-  int _width = 1280;
-  int _height = 720;
+  int _bitrateKbps = 6000; // 6 Mbps for motion-clear 1080p
+  String _resolutionLabel = "1080p (FHD)";
+  int _width = 1920;
+  int _height = 1080;
   int _fps = 30;
+
   List<Map<String, String>> _availableCameras = [];
   String? _selectedCameraId;
-  
+
+  // Zoom Control state
+  double _zoom = 1.0;
+  double _minZoom = 1.0;
+  double _maxZoom = 10.0;
+  bool _showZoomSlider = false;
+
   Timer? _uptimeTimer;
   Timer? _batteryTimer;
   Timer? _connectionTimeoutTimer;
@@ -103,7 +110,8 @@ class _BroadcastViewState extends State<BroadcastView> {
 
     if (statuses[Permission.camera]!.isGranted && statuses[Permission.microphone]!.isGranted) {
       await _fetchAvailableCameras();
-      _initNativeStream();
+      await _initNativeStream();
+      _fetchZoomRange();
     } else {
       _updateStatusText("Error: Permissions Denied");
       _showErrorDialog("Camera and Microphone permissions are required to start the stream.");
@@ -114,60 +122,68 @@ class _BroadcastViewState extends State<BroadcastView> {
     try {
       final List<dynamic>? cameras = await _channel.invokeMethod<List<dynamic>>('getAvailableCameras');
       if (cameras != null) {
-        _availableCameras = cameras.map((c) {
-          final map = Map<String, dynamic>.from(c);
-          return {
-            'id': map['id']?.toString() ?? '',
-            'facing': map['facing']?.toString() ?? '',
-            'maxWidth': map['maxWidth']?.toString() ?? '0',
-            'maxHeight': map['maxHeight']?.toString() ?? '0',
-            'hasAutoFocus': map['hasAutoFocus']?.toString() ?? 'false',
-            'sensorOrientation': map['sensorOrientation']?.toString() ?? '0',
-            'lensType': map['lensType']?.toString() ?? 'Wide Angle',
-            'fovDegrees': map['fovDegrees']?.toString() ?? '0',
-            'focalLength': map['focalLength']?.toString() ?? '0',
-          };
-        }).toList();
+        setState(() {
+          _availableCameras = cameras.map((c) {
+            final map = Map<String, dynamic>.from(c);
+            return {
+              'id': map['id']?.toString() ?? '',
+              'facing': map['facing']?.toString() ?? '',
+              'maxWidth': map['maxWidth']?.toString() ?? '0',
+              'maxHeight': map['maxHeight']?.toString() ?? '0',
+              'hasAutoFocus': map['hasAutoFocus']?.toString() ?? 'false',
+              'sensorOrientation': map['sensorOrientation']?.toString() ?? '0',
+              'lensType': map['lensType']?.toString() ?? 'Wide Angle',
+              'fovDegrees': map['fovDegrees']?.toString() ?? '0',
+              'focalLength': map['focalLength']?.toString() ?? '0',
+              'isPhysical': map['isPhysical']?.toString() ?? 'false',
+            };
+          }).toList();
+        });
 
-        if (_availableCameras.isNotEmpty) {
-          // Auto camera lens detector selection strategy:
-          // 1. First choice: Back camera with "Wide Angle" lens
+        if (_availableCameras.isNotEmpty && _selectedCameraId == null) {
           Map<String, String>? autoDetectedCam;
+          // Choice 1: Back Primary Wide Angle (Main 64MP/Primary)
           try {
             autoDetectedCam = _availableCameras.firstWhere(
               (c) => c['facing']?.toLowerCase() == 'back' &&
-                  (c['lensType']?.toLowerCase().contains('wide angle') == true ||
-                   c['lensType']?.toLowerCase() == 'wide'),
+                  c['lensType']?.toLowerCase().contains('wide') == true,
             );
           } catch (_) {}
 
-          // 2. Fallback: Back camera with "Ultra Wide" lens if Wide Angle not found
-          if (autoDetectedCam == null) {
-            try {
-              autoDetectedCam = _availableCameras.firstWhere(
-                (c) => c['facing']?.toLowerCase() == 'back' &&
-                    c['lensType']?.toLowerCase().contains('ultra wide') == true,
-              );
-            } catch (_) {}
-          }
+          // Choice 2: Any Back Camera
+          autoDetectedCam ??= _availableCameras.firstWhere(
+            (c) => c['facing']?.toLowerCase() == 'back',
+            orElse: () => _availableCameras.first,
+          );
 
-          // 3. Fallback: Any back camera
-          if (autoDetectedCam == null) {
-            try {
-              autoDetectedCam = _availableCameras.firstWhere(
-                (c) => c['facing']?.toLowerCase() == 'back',
-              );
-            } catch (_) {}
-          }
-
-          // 4. Ultimate fallback: First available camera
-          autoDetectedCam ??= _availableCameras.first;
           _selectedCameraId = autoDetectedCam['id'];
         }
       }
     } catch (e) {
       debugPrint("Failed to fetch camera list: $e");
     }
+  }
+
+  Future<void> _fetchZoomRange() async {
+    try {
+      final Map<dynamic, dynamic>? range = await _channel.invokeMethod<Map<dynamic, dynamic>>('getZoomRange');
+      if (range != null) {
+        setState(() {
+          _minZoom = (range['min'] as num?)?.toDouble() ?? 1.0;
+          _maxZoom = (range['max'] as num?)?.toDouble() ?? 10.0;
+          if (_zoom < _minZoom) _zoom = _minZoom;
+          if (_zoom > _maxZoom) _zoom = _maxZoom;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _setZoom(double value) async {
+    final clamped = value.clamp(_minZoom, _maxZoom);
+    setState(() => _zoom = clamped);
+    try {
+      await _channel.invokeMethod('setZoom', {'zoom': clamped});
+    } catch (_) {}
   }
 
   Future<void> _initNativeStream() async {
@@ -206,7 +222,7 @@ class _BroadcastViewState extends State<BroadcastView> {
       final level = await _battery.batteryLevel;
       _updateBatteryLevel(level);
     } catch (_) {}
-    
+
     _batteryTimer = Timer.periodic(const Duration(seconds: 60), (timer) async {
       try {
         final level = await _battery.batteryLevel;
@@ -268,7 +284,7 @@ class _BroadcastViewState extends State<BroadcastView> {
     _lastBitrateUpdateTime = DateTime.now();
     _isStreamingNotifier.value = true;
     _isConnectingNotifier.value = false;
-    
+
     _telemetryNotifier.value = TelemetryState(
       elapsedTime: Duration.zero,
       currentBitrateKbps: _telemetryNotifier.value.currentBitrateKbps,
@@ -287,8 +303,8 @@ class _BroadcastViewState extends State<BroadcastView> {
           streamStatus: _telemetryNotifier.value.streamStatus,
         );
       }
-      
-      if (_isStreamingNotifier.value && 
+
+      if (_isStreamingNotifier.value &&
           DateTime.now().difference(_lastBitrateUpdateTime) > const Duration(seconds: 5)) {
         _handleStreamFreeze();
       }
@@ -300,15 +316,15 @@ class _BroadcastViewState extends State<BroadcastView> {
   Future<void> _handleStreamFreeze() async {
     if (!_isStreamingNotifier.value || _isReconnecting) return;
     _isReconnecting = true;
-    
+
     _updateStatusText("Reconnecting...");
     _isConnectingNotifier.value = true;
     _isStreamingNotifier.value = false;
     _uptimeTimer?.cancel();
     _syncStateToFirestore(isLive: false);
-    
+
     _isStoppingStream = true;
-    
+
     try {
       await _channel.invokeMethod('stopStream');
     } catch (_) {}
@@ -318,7 +334,7 @@ class _BroadcastViewState extends State<BroadcastView> {
       _isReconnecting = false;
       return;
     }
-    
+
     _isReconnecting = false;
     _isConnectingNotifier.value = false;
     _toggleStream();
@@ -370,9 +386,7 @@ class _BroadcastViewState extends State<BroadcastView> {
 
       final userId = FirebaseAuth.instance.currentUser?.uid ?? "userId";
 
-      // Build the publish URL dynamically based on stream protocol and IP version
       String host = widget.serverIp;
-      // Wrap IPv6 literal addresses in square brackets for URL formatting
       if (widget.ipVersion == "ipv6" && host.contains(':') && !host.startsWith('[')) {
         host = '[$host]';
       }
@@ -431,114 +445,289 @@ class _BroadcastViewState extends State<BroadcastView> {
     }
   }
 
-  void _switchCamera() {
-    if (_availableCameras.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No camera sensors detected")),
-      );
-      return;
-    }
+  // --- Tabbed Camera Sensor Selection Modal (Built-in Lenses vs USB OTG Webcams) ---
+  void _openTabbedCameraModal() {
+    _fetchAvailableCameras();
 
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF0F172A),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: Color(0xFF1E293B), width: 1.2),
-          ),
-          title: const Text(
-            "Select Camera Sensor",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+        return DefaultTabController(
+          length: 2,
+          child: Dialog(
+            backgroundColor: const Color(0xFF0F172A),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: const BorderSide(color: Color(0xFF1E293B), width: 1.2),
             ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: _availableCameras.map((camera) {
-              final isSelected = _selectedCameraId == camera['id'];
-              final lensType = camera['lensType'] ?? 'Standard';
-              final maxW = int.tryParse(camera['maxWidth'] ?? '0') ?? 0;
-              final maxH = int.tryParse(camera['maxHeight'] ?? '0') ?? 0;
-              final hasAF = camera['hasAutoFocus'] == 'true';
-              final resLabel = maxW >= 3840 ? '4K' : maxW >= 1920 ? '1080p' : maxW >= 1280 ? '720p' : '$maxW x $maxH';
-
-              IconData cameraIcon;
-              if (camera['facing']?.toLowerCase() == 'front') {
-                cameraIcon = Icons.camera_front_rounded;
-              } else if (camera['facing']?.toLowerCase() == 'external') {
-                cameraIcon = Icons.usb_rounded;
-              } else {
-                cameraIcon = Icons.camera_rear_rounded;
-              }
-
-              return ListTile(
-                leading: Icon(
-                  cameraIcon,
-                  color: isSelected ? const Color(0xFF10B981) : const Color(0xFF64748B),
-                ),
-                title: Text(
-                  "$lensType (${camera['facing']})",
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : const Color(0xFF94A3B8),
-                    fontSize: 14,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            child: Container(
+              width: MediaQuery.of(context).size.width * 0.7,
+              height: MediaQuery.of(context).size.height * 0.8,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  // Modal Title Bar & Tab Navigation
+                  Row(
+                    children: [
+                      const Icon(Icons.linked_camera_rounded, color: Color(0xFF10B981), size: 22),
+                      const SizedBox(width: 10),
+                      const Text(
+                        "Camera Source Selection",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded, color: Color(0xFF94A3B8), size: 20),
+                      ),
+                    ],
                   ),
-                ),
-                subtitle: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        resLabel,
-                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600),
-                      ),
+                  const SizedBox(height: 12),
+
+                  // Tab Selector Header
+                  Container(
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF050811),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF1E293B), width: 1),
                     ),
-                    if (camera['fovDegrees'] != null && camera['fovDegrees'] != '0')
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E293B),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          "${camera['fovDegrees']}° FOV",
-                          style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    if (hasAF)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E293B),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          "AF",
-                          style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                  ],
-                ),
-                trailing: isSelected ? const Icon(Icons.check_rounded, color: Color(0xFF10B981)) : null,
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _switchCameraTo(camera['id']!);
-                },
-              );
-            }).toList(),
+                    child: const TabBar(
+                      indicatorColor: Color(0xFF10B981),
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      labelColor: Color(0xFF10B981),
+                      unselectedLabelColor: Color(0xFF64748B),
+                      labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      tabs: [
+                        Tab(text: "📱 Built-in Lenses"),
+                        Tab(text: "🔌 External USB Webcams (OTG)"),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Tab Views
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        // TAB 1: Built-in Phone Lenses
+                        _buildInternalLensesList(),
+
+                        // TAB 2: USB OTG Webcams
+                        _buildExternalWebcamsList(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildInternalLensesList() {
+    final internalCams = _availableCameras.where((c) => c['facing']?.toLowerCase() != 'external').toList();
+
+    if (internalCams.isEmpty) {
+      return const Center(
+        child: Text("No built-in camera sensors detected", style: TextStyle(color: Color(0xFF64748B))),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: internalCams.length,
+      itemBuilder: (context, index) {
+        final camera = internalCams[index];
+        return _buildCameraTile(camera);
+      },
+    );
+  }
+
+  Widget _buildExternalWebcamsList() {
+    final externalCams = _availableCameras.where((c) => c['facing']?.toLowerCase() == 'external').toList();
+
+    if (externalCams.isEmpty) {
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF1E293B),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.usb_off_rounded, color: Color(0xFF64748B), size: 22),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                "No USB OTG Webcam Detected",
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                "Plug in a USB webcam via OTG adapter to stream from an external camera sensor.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: () => _fetchAvailableCameras(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                icon: const Icon(Icons.refresh_rounded, size: 14),
+                label: const Text("Rescan USB Webcams", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: externalCams.length,
+      itemBuilder: (context, index) {
+        final camera = externalCams[index];
+        return _buildCameraTile(camera);
+      },
+    );
+  }
+
+  Widget _buildCameraTile(Map<String, String> camera) {
+    final isSelected = _selectedCameraId == camera['id'];
+    final lensType = camera['lensType'] ?? 'Standard';
+    final facing = camera['facing'] ?? 'Back';
+    final maxW = int.tryParse(camera['maxWidth'] ?? '0') ?? 0;
+    final maxH = int.tryParse(camera['maxHeight'] ?? '0') ?? 0;
+    final hasAF = camera['hasAutoFocus'] == 'true';
+    final fov = camera['fovDegrees'];
+    final focalLength = camera['focalLength'];
+    final isPhys = camera['isPhysical'] == 'true';
+
+    final resLabel = maxW >= 3840 ? '4K UHD' : maxW >= 1920 ? '1080p FHD' : maxW >= 1280 ? '720p HD' : '$maxW x $maxH';
+
+    IconData cameraIcon;
+    if (facing.toLowerCase() == 'front') {
+      cameraIcon = Icons.camera_front_rounded;
+    } else if (facing.toLowerCase() == 'external') {
+      cameraIcon = Icons.usb_rounded;
+    } else if (lensType.contains('Ultra')) {
+      cameraIcon = Icons.filter_center_focus_rounded;
+    } else if (lensType.contains('Telephoto')) {
+      cameraIcon = Icons.center_focus_strong_rounded;
+    } else {
+      cameraIcon = Icons.camera_rear_rounded;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.12) : const Color(0xFF050811),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isSelected ? const Color(0xFF10B981) : const Color(0xFF1E293B),
+          width: isSelected ? 1.5 : 1.0,
+        ),
+      ),
+      child: ListTile(
+        leading: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.2) : const Color(0xFF1E293B),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            cameraIcon,
+            color: isSelected ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+            size: 20,
+          ),
+        ),
+        title: Row(
+          children: [
+            Text(
+              "$lensType ($facing)",
+              style: TextStyle(
+                color: isSelected ? Colors.white : const Color(0xFFE2E8F0),
+                fontSize: 13.5,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+              ),
+            ),
+            if (isPhys) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3B82F6).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFF3B82F6), width: 0.6),
+                ),
+                child: const Text(
+                  "PHYSICAL LENS",
+                  style: TextStyle(color: Color(0xFF60A5FA), fontSize: 8.5, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4.0),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
+                child: Text(resLabel, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
+              ),
+              if (fov != null && fov != '0')
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
+                  child: Text("$fov° FOV", style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w600)),
+                ),
+              if (focalLength != null && focalLength != '0.0')
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
+                  child: Text("${focalLength}mm", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.w600)),
+                ),
+              if (hasAF)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
+                  child: const Text("AF", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
+                ),
+            ],
+          ),
+        ),
+        trailing: isSelected
+            ? Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle),
+                child: const Icon(Icons.check_rounded, color: Colors.white, size: 14),
+              )
+            : null,
+        onTap: () {
+          Navigator.of(context).pop();
+          _switchCameraTo(camera['id']!);
+        },
+      ),
     );
   }
 
@@ -549,6 +738,7 @@ class _BroadcastViewState extends State<BroadcastView> {
       setState(() {
         _selectedCameraId = cameraId;
       });
+      _fetchZoomRange();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -664,7 +854,7 @@ class _BroadcastViewState extends State<BroadcastView> {
                   ),
           ),
 
-          // 2. Translucent Edge Shading for Maximum Readability
+          // 2. Edge Vignette Shading
           Positioned.fill(
             child: IgnorePointer(
               child: Container(
@@ -685,247 +875,284 @@ class _BroadcastViewState extends State<BroadcastView> {
             ),
           ),
 
-          // 3. Top Header Viewport HUD
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: const EdgeInsets.only(top: 48.0, left: 20.0, right: 20.0, bottom: 16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // 3. UI Overlays (wrapped in SafeArea to prevent status bar/notch overlap)
+          Positioned.fill(
+            child: SafeArea(
+              child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  // Back Button with Tactile Feedback
-                  _InteractiveButton(
-                    onPressed: () async {
-                      if (_isStreamingNotifier.value) {
-                        await _toggleStream();
-                        if (!context.mounted) return;
-                        Navigator.of(context).pop();
-                      } else {
-                        Navigator.of(context).pop();
-                      }
-                    },
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: _buttonBgColor,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: _buttonBorderColor, width: 0.8),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
+                  // TOP LANDSCAPE TELEMETRY HUD BAR
+                  Positioned(
+                    top: 14,
+                    left: 80,
+                    right: 80,
+                    child: ValueListenableBuilder<TelemetryState>(
+                      valueListenable: _telemetryNotifier,
+                      builder: (context, telemetry, child) {
+                        final isLive = telemetry.streamStatus == "Live";
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                          decoration: BoxDecoration(
+                            color: _hudBgColor,
+                            borderRadius: BorderRadius.circular(20.0),
+                            border: Border.all(color: _hudBorderColor, width: 1.2),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4)),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              // Transmission State
+                              Row(
+                                children: [
+                                  const Icon(Icons.sensors_rounded, size: 14, color: Color(0xFF10B981)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    telemetry.streamStatus.toUpperCase(),
+                                    style: TextStyle(
+                                      color: isLive
+                                          ? const Color(0xFF10B981)
+                                          : (telemetry.streamStatus.contains("Connecting")
+                                              ? const Color(0xFF34D399)
+                                              : Colors.white),
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Container(width: 1, height: 16, color: const Color(0xFF1E293B)),
+
+                              // Uptime
+                              Row(
+                                children: [
+                                  const Icon(Icons.timer_rounded, size: 14, color: Color(0xFF38BDF8)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _formatDuration(telemetry.elapsedTime),
+                                    style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                              Container(width: 1, height: 16, color: const Color(0xFF1E293B)),
+
+                              // Bitrate
+                              Row(
+                                children: [
+                                  const Icon(Icons.speed_rounded, size: 14, color: Color(0xFFF59E0B)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "${telemetry.currentBitrateKbps} KBPS",
+                                    style: const TextStyle(color: Color(0xFF10B981), fontSize: 11.5, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                              Container(width: 1, height: 16, color: const Color(0xFF1E293B)),
+
+                              // Battery Level
+                              Row(
+                                children: [
+                                  Icon(
+                                    telemetry.batteryLevel > 20 ? Icons.battery_charging_full_rounded : Icons.battery_alert_rounded,
+                                    size: 14,
+                                    color: telemetry.batteryLevel > 20 ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "${telemetry.batteryLevel}%",
+                                    style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
 
-                  // Compact Camera Node Badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _buttonBgColor,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: _buttonBorderColor, width: 0.8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                  // 4. LEFT STUDIO DOCK (Navigation, Live Badge, Camera Node, Zoom Button)
+                  Positioned(
+                    left: 16,
+                    top: 14,
+                    bottom: 14,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Icon(Icons.videocam_rounded, size: 14, color: Color(0xFF10B981)),
-                        const SizedBox(width: 6),
-                        Text(
-                          widget.cameraId.toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 11.5,
-                            letterSpacing: 0.5,
+                        // Back Button
+                        _InteractiveButton(
+                          onPressed: () async {
+                            if (_isStreamingNotifier.value) {
+                              await _toggleStream();
+                              if (!context.mounted) return;
+                              Navigator.of(context).pop();
+                            } else {
+                              Navigator.of(context).pop();
+                            }
+                          },
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: _buttonBgColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: _buttonBorderColor, width: 0.8),
+                            ),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
+                          ),
+                        ),
+
+                        // Standby / Live Indicator Badge
+                        ValueListenableBuilder<bool>(
+                          valueListenable: _isStreamingNotifier,
+                          builder: (context, isLive, child) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isLive ? const Color(0xFFEF4444).withValues(alpha: 0.2) : _buttonBgColor,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isLive ? const Color(0xFFEF4444).withValues(alpha: 0.4) : _buttonBorderColor,
+                                  width: 0.8,
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: isLive ? const Color(0xFFEF4444) : const Color(0xFF64748B),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    isLive ? "LIVE" : "STBY",
+                                    style: TextStyle(
+                                      color: isLive ? const Color(0xFFEF4444) : const Color(0xFF64748B),
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 9,
+                                      letterSpacing: 0.8,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+
+                        // Camera Node Badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: _buttonBgColor,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _buttonBorderColor, width: 0.8),
+                          ),
+                          child: Column(
+                            children: [
+                              const Icon(Icons.videocam_rounded, size: 14, color: Color(0xFF10B981)),
+                              const SizedBox(height: 2),
+                              Text(
+                                widget.cameraId.toUpperCase(),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 9.5),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Interactive Zoom Button (toggles zoom slider overlay)
+                        _InteractiveButton(
+                          onPressed: () {
+                            setState(() => _showZoomSlider = !_showZoomSlider);
+                          },
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: _showZoomSlider ? const Color(0xFF10B981) : _buttonBgColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: _buttonBorderColor, width: 0.8),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              "${_zoom.toStringAsFixed(1)}x",
+                              style: TextStyle(
+                                color: _showZoomSlider ? Colors.white : const Color(0xFF10B981),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 11,
+                              ),
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
 
-                  // Standby / Live Indicator Badge
-                  ValueListenableBuilder<bool>(
-                    valueListenable: _isStreamingNotifier,
-                    builder: (context, isLive, child) {
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  // 5. VERTICAL ZOOM DRAG SLIDER OVERLAY
+                  if (_showZoomSlider)
+                    Positioned(
+                      left: 70,
+                      top: 50,
+                      bottom: 50,
+                      child: Container(
+                        width: 54,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         decoration: BoxDecoration(
-                          color: isLive ? const Color(0xFFEF4444).withValues(alpha: 0.2) : _buttonBgColor,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: isLive ? const Color(0xFFEF4444).withValues(alpha: 0.4) : _buttonBorderColor,
-                            width: 0.8,
-                          ),
+                          color: _hudBgColor,
+                          borderRadius: BorderRadius.circular(25),
+                          border: Border.all(color: _hudBorderColor, width: 1.2),
+                          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 12)],
                         ),
-                        child: Row(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: isLive ? const Color(0xFFEF4444) : const Color(0xFF64748B),
-                                shape: BoxShape.circle,
+                            // Quick Zoom Preset Pills
+                            _buildZoomPresetPill(1.0, "1x"),
+                            _buildZoomPresetPill(2.0, "2x"),
+                            _buildZoomPresetPill(5.0, "5x"),
+                            const SizedBox(height: 8),
+
+                            // Continuous Vertical Zoom Slider
+                            Expanded(
+                              child: RotatedBox(
+                                quarterTurns: 3,
+                                child: Slider(
+                                  value: _zoom.clamp(_minZoom, _maxZoom),
+                                  min: _minZoom,
+                                  max: _maxZoom,
+                                  activeColor: const Color(0xFF10B981),
+                                  inactiveColor: const Color(0xFF1E293B),
+                                  onChanged: (val) => _setZoom(val),
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(height: 8),
                             Text(
-                              isLive ? "LIVE" : "STANDBY",
-                              style: TextStyle(
-                                color: isLive ? const Color(0xFFEF4444) : const Color(0xFF64748B),
-                                fontWeight: FontWeight.w800,
-                                fontSize: 10,
-                                letterSpacing: 0.8,
-                              ),
+                              "${_zoom.toStringAsFixed(1)}x",
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // 4. Integrated Sleek Viewfinder Telemetry & Controls Panel
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Viewfinder-Style Integrated HUD Panel (Horizontal Strip)
-                    ValueListenableBuilder<TelemetryState>(
-                      valueListenable: _telemetryNotifier,
-                      builder: (context, telemetry, child) {
-                        final isLive = telemetry.streamStatus == "Live";
-                        
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
-                          decoration: BoxDecoration(
-                            color: _hudBgColor,
-                            borderRadius: BorderRadius.circular(14.0),
-                            border: Border.all(color: _hudBorderColor, width: 1.2),
-                          ),
-                          child: IntrinsicHeight(
-                            child: Row(
-                              children: [
-                                // Left Section: Status & Uptime
-                                Expanded(
-                                  flex: 12,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        "TRANSMISSION STATE",
-                                        style: TextStyle(
-                                          color: Color(0xFF64748B),
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.8,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        telemetry.streamStatus.toUpperCase(),
-                                        style: TextStyle(
-                                          color: isLive 
-                                              ? const Color(0xFF10B981) 
-                                              : (telemetry.streamStatus.contains("Connecting") 
-                                                  ? const Color(0xFF34D399) 
-                                                  : Colors.white),
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                
-                                const VerticalDivider(color: Color(0xFF1E293B), width: 24, thickness: 1.2),
-                                
-                                // Middle Section: Uptime & Bitrate
-                                Expanded(
-                                  flex: 11,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        "UPTIME",
-                                        style: TextStyle(
-                                          color: Color(0xFF64748B),
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.8,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        _formatDuration(telemetry.elapsedTime),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-
-                                const VerticalDivider(color: Color(0xFF1E293B), width: 24, thickness: 1.2),
-
-                                // Right Section: Bitrate / Quality
-                                Expanded(
-                                  flex: 11,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        "BITRATE",
-                                        style: TextStyle(
-                                          color: Color(0xFF64748B),
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.8,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 3),
-                                      Text(
-                                        "${telemetry.currentBitrateKbps} KBPS",
-                                        style: const TextStyle(
-                                          color: Color(0xFF10B981),
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
+                      ),
                     ),
-                    const SizedBox(height: 20),
 
-                    // Controls Row
-                    Row(
+                  // 6. RIGHT STUDIO ACTION DOCK (Camera Picker, Mic Mute, Settings, Go Live)
+                  Positioned(
+                    right: 16,
+                    top: 14,
+                    bottom: 14,
+                    child: Column(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
-                        // Flip Camera Sensor Button
+                        // Camera Sensor Switcher (Opens Tabbed Modal)
                         _buildRoundOverlayButton(
-                          icon: Icons.flip_camera_android_rounded,
-                          onTap: _switchCamera,
+                          icon: Icons.linked_camera_rounded,
+                          onTap: _openTabbedCameraModal,
                         ),
 
                         // Microphone Toggle Button
@@ -940,7 +1167,13 @@ class _BroadcastViewState extends State<BroadcastView> {
                           },
                         ),
 
-                        // Premium Go Live Action Button
+                        // Settings Panel Button
+                        _buildRoundOverlayButton(
+                          icon: Icons.tune_rounded,
+                          onTap: _showSettingsPanel,
+                        ),
+
+                        // Action Button: GO LIVE / STOP LIVE
                         ValueListenableBuilder<bool>(
                           valueListenable: _isStreamingNotifier,
                           builder: (context, isStreaming, child) {
@@ -952,17 +1185,15 @@ class _BroadcastViewState extends State<BroadcastView> {
                                   child: AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
                                     height: 52,
-                                    width: 140,
+                                    width: 52,
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
-                                      color: isStreaming 
-                                          ? const Color(0xFFEF4444) 
-                                          : const Color(0xFF10B981),
-                                      borderRadius: BorderRadius.circular(26),
+                                      color: isStreaming ? const Color(0xFFEF4444) : const Color(0xFF10B981),
+                                      shape: BoxShape.circle,
                                       boxShadow: [
                                         BoxShadow(
                                           color: (isStreaming ? const Color(0xFFEF4444) : const Color(0xFF10B981))
-                                              .withValues(alpha: 0.25),
+                                              .withValues(alpha: 0.35),
                                           blurRadius: 15,
                                           spreadRadius: 2,
                                         ),
@@ -970,21 +1201,17 @@ class _BroadcastViewState extends State<BroadcastView> {
                                     ),
                                     child: isConnecting
                                         ? const SizedBox(
-                                            height: 18,
-                                            width: 18,
+                                            height: 20,
+                                            width: 20,
                                             child: CircularProgressIndicator(
-                                              strokeWidth: 2.0,
+                                              strokeWidth: 2.2,
                                               valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                                             ),
                                           )
-                                        : Text(
-                                            isStreaming ? "STOP LIVE" : "GO LIVE",
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.8,
-                                              fontSize: 13,
-                                              color: Colors.white,
-                                            ),
+                                        : Icon(
+                                            isStreaming ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                                            color: Colors.white,
+                                            size: 28,
                                           ),
                                   ),
                                 );
@@ -992,20 +1219,36 @@ class _BroadcastViewState extends State<BroadcastView> {
                             );
                           },
                         ),
-
-                        // Settings/Configuration Button
-                        _buildRoundOverlayButton(
-                          icon: Icons.tune_rounded,
-                          onTap: _showSettingsPanel,
-                        ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildZoomPresetPill(double targetZoom, String label) {
+    final isSelected = (_zoom - targetZoom).abs() < 0.2;
+    return GestureDetector(
+      onTap: () => _setZoom(targetZoom),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF10B981) : const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : const Color(0xFF94A3B8),
+            fontSize: 9,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
     );
   }
@@ -1018,8 +1261,8 @@ class _BroadcastViewState extends State<BroadcastView> {
     return _InteractiveButton(
       onPressed: onTap,
       child: Container(
-        width: 48,
-        height: 48,
+        width: 44,
+        height: 44,
         decoration: BoxDecoration(
           color: _buttonBgColor,
           shape: BoxShape.circle,
@@ -1047,30 +1290,39 @@ class _BroadcastViewState extends State<BroadcastView> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final isStreamingLive = _isStreamingNotifier.value;
-            
+
             return SafeArea(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      "Stream Configuration",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    
-                    // Bitrate Configuration
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          "Target Bitrate",
+                          "Stream Encoder Settings",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close_rounded, color: Color(0xFF94A3B8), size: 20),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Bitrate Configuration Slider
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          "Target Bitrate (Mbps)",
                           style: TextStyle(
                             color: Color(0xFF64748B),
                             fontSize: 13,
@@ -1078,7 +1330,7 @@ class _BroadcastViewState extends State<BroadcastView> {
                           ),
                         ),
                         Text(
-                          "$_bitrateKbps kbps",
+                          "${(_bitrateKbps / 1000).toStringAsFixed(1)} Mbps ($_bitrateKbps kbps)",
                           style: const TextStyle(
                             color: Color(0xFF10B981),
                             fontSize: 13,
@@ -1088,7 +1340,7 @@ class _BroadcastViewState extends State<BroadcastView> {
                       ],
                     ),
                     Slider(
-                      value: _bitrateKbps.toDouble(),
+                      value: _bitrateKbps.toDouble().clamp(200, 15000),
                       min: 200,
                       max: 15000,
                       divisions: 148,
@@ -1106,11 +1358,11 @@ class _BroadcastViewState extends State<BroadcastView> {
                               _initNativeStream();
                             },
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
-                    // Quality (Resolution) Configuration
+                    // Resolution Preset Dropdown
                     const Text(
-                      "Video Resolution",
+                      "Video Resolution & Frame Rate",
                       style: TextStyle(
                         color: Color(0xFF64748B),
                         fontSize: 13,
@@ -1143,27 +1395,23 @@ class _BroadcastViewState extends State<BroadcastView> {
                       items: const [
                         DropdownMenuItem(
                           value: "4K (UHD)",
-                          child: Text("4K (3840x2160) @ 30fps", overflow: TextOverflow.ellipsis),
+                          child: Text("4K (3840x2160) @ 30fps - 10 Mbps Preset", overflow: TextOverflow.ellipsis),
                         ),
                         DropdownMenuItem(
                           value: "1080p (FHD)",
-                          child: Text("1080p (1920x1080) @ 30fps", overflow: TextOverflow.ellipsis),
+                          child: Text("1080p (1920x1080) @ 30fps - 6 Mbps Preset (High Motion)", overflow: TextOverflow.ellipsis),
                         ),
                         DropdownMenuItem(
                           value: "720p (HD)",
-                          child: Text("720p (1280x720) @ 30fps", overflow: TextOverflow.ellipsis),
+                          child: Text("720p (1280x720) @ 30fps - 3 Mbps Preset", overflow: TextOverflow.ellipsis),
                         ),
                         DropdownMenuItem(
                           value: "480p (SD)",
-                          child: Text("480p (854x480) @ 30fps", overflow: TextOverflow.ellipsis),
+                          child: Text("480p (854x480) @ 30fps - 1.5 Mbps Preset", overflow: TextOverflow.ellipsis),
                         ),
                         DropdownMenuItem(
                           value: "360p (Low)",
-                          child: Text("360p (640x360) @ 24fps", overflow: TextOverflow.ellipsis),
-                        ),
-                        DropdownMenuItem(
-                          value: "240p (Ultra Low)",
-                          child: Text("240p (426x240) @ 15fps", overflow: TextOverflow.ellipsis),
+                          child: Text("360p (640x360) @ 24fps - 0.8 Mbps Preset", overflow: TextOverflow.ellipsis),
                         ),
                       ],
                       onChanged: isStreamingLive
@@ -1180,28 +1428,23 @@ class _BroadcastViewState extends State<BroadcastView> {
                                   } else if (val.startsWith("1080p")) {
                                     _width = 1920;
                                     _height = 1080;
-                                    _bitrateKbps = 4000;
+                                    _bitrateKbps = 6000;
                                     _fps = 30;
                                   } else if (val.startsWith("720p")) {
                                     _width = 1280;
                                     _height = 720;
-                                    _bitrateKbps = 2000;
+                                    _bitrateKbps = 3000;
                                     _fps = 30;
                                   } else if (val.startsWith("480p")) {
                                     _width = 854;
                                     _height = 480;
-                                    _bitrateKbps = 1000;
+                                    _bitrateKbps = 1500;
                                     _fps = 30;
-                                  } else if (val.startsWith("360p")) {
+                                  } else {
                                     _width = 640;
                                     _height = 360;
-                                    _bitrateKbps = 500;
+                                    _bitrateKbps = 800;
                                     _fps = 24;
-                                  } else {
-                                    _width = 426;
-                                    _height = 240;
-                                    _bitrateKbps = 250;
-                                    _fps = 15;
                                   }
                                 });
                                 setState(() {
@@ -1214,28 +1457,23 @@ class _BroadcastViewState extends State<BroadcastView> {
                                   } else if (val.startsWith("1080p")) {
                                     _width = 1920;
                                     _height = 1080;
-                                    _bitrateKbps = 4000;
+                                    _bitrateKbps = 6000;
                                     _fps = 30;
                                   } else if (val.startsWith("720p")) {
                                     _width = 1280;
                                     _height = 720;
-                                    _bitrateKbps = 2000;
+                                    _bitrateKbps = 3000;
                                     _fps = 30;
                                   } else if (val.startsWith("480p")) {
                                     _width = 854;
                                     _height = 480;
-                                    _bitrateKbps = 1000;
+                                    _bitrateKbps = 1500;
                                     _fps = 30;
-                                  } else if (val.startsWith("360p")) {
+                                  } else {
                                     _width = 640;
                                     _height = 360;
-                                    _bitrateKbps = 500;
+                                    _bitrateKbps = 800;
                                     _fps = 24;
-                                  } else {
-                                    _width = 426;
-                                    _height = 240;
-                                    _bitrateKbps = 250;
-                                    _fps = 15;
                                   }
                                 });
                                 _initNativeStream();
@@ -1243,9 +1481,9 @@ class _BroadcastViewState extends State<BroadcastView> {
                             },
                     ),
                     if (isStreamingLive) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       const Text(
-                        "* Resolution & bitrate are locked while live",
+                        "* Resolution and bitrate are locked during active live stream",
                         style: TextStyle(
                           color: Color(0xFFEF4444),
                           fontSize: 11,
