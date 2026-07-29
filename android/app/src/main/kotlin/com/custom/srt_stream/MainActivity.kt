@@ -29,6 +29,7 @@ class MainActivity : FlutterActivity(), ConnectChecker {
     private var targetBitrate = 2000000
     private var targetFps = 30
     private var streamType = "rtmp"
+    private var lastAppliedZoom = 1.0f
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -189,7 +190,10 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                     val camera = StreamingForegroundService.camera
                     if (camera != null) {
                         try {
-                            camera.setZoom(zoom)
+                            if (kotlin.math.abs(zoom - lastAppliedZoom) >= 0.02f) {
+                                lastAppliedZoom = zoom
+                                camera.setZoom(zoom)
+                            }
                             result.success(true)
                         } catch (e: Exception) {
                             result.error("ZOOM_ERROR", e.message, null)
@@ -254,6 +258,49 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                             } catch (_: Exception) {}
                         }
                     }
+
+                    // Also scan USB OTG host hardware bus for external USB webcams (e.g. Logitech Brio 100)
+                    // for Android ROMs (Oppo, iQOO, Xiaomi) that hide external cameras from CameraManager.cameraIdList
+                    try {
+                        val usbManager = getSystemService(Context.USB_SERVICE) as? android.hardware.usb.UsbManager
+                        val deviceList = usbManager?.deviceList
+                        if (deviceList != null) {
+                            for ((_, device) in deviceList) {
+                                var isVideoDevice = device.deviceClass == 14 // USB_CLASS_VIDEO (0x0E)
+                                if (!isVideoDevice) {
+                                    for (i in 0 until device.interfaceCount) {
+                                        if (device.getInterface(i).interfaceClass == 14) {
+                                            isVideoDevice = true
+                                            break
+                                        }
+                                    }
+                                }
+                                if (isVideoDevice) {
+                                    val usbId = "usb_${device.deviceId}"
+                                    if (!processedIds.contains(usbId)) {
+                                        val productName = device.productName ?: "External USB Webcam"
+                                        val webcamDetails = mapOf(
+                                            "id" to usbId,
+                                            "facing" to "External",
+                                            "maxWidth" to "1920",
+                                            "maxHeight" to "1080",
+                                            "hasAutoFocus" to "true",
+                                            "sensorOrientation" to "0",
+                                            "lensType" to "$productName (USB OTG)",
+                                            "fovDegrees" to "90",
+                                            "focalLength" to "3.6",
+                                            "isPhysical" to "true",
+                                            "vendorId" to device.vendorId.toString(),
+                                            "productId" to device.productId.toString()
+                                        )
+                                        resultList.add(webcamDetails)
+                                        processedIds.add(usbId)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+
                     result.success(resultList)
                 } catch (e: Exception) {
                     result.error("CAMERA_ERROR", e.message, null)
@@ -377,7 +424,10 @@ class MainActivity : FlutterActivity(), ConnectChecker {
     private fun startPreviewIfNeeded() {
         val camera = StreamingForegroundService.camera ?: return
         if (!camera.isOnPreview) {
-            camera.startPreview()
+            // Pre-configure 16:9 preview resolution to match the stream output aspect ratio.
+            // This ensures the OpenGL texture matrix is set to 16:9 from the very start,
+            // so there is zero FOV shift/jump when startStream() later calls prepareVideo().
+            camera.startPreview(1920, 1080)
         }
     }
 

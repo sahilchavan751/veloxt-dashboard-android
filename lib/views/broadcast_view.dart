@@ -77,6 +77,8 @@ class _BroadcastViewState extends State<BroadcastView> {
   Timer? _uptimeTimer;
   Timer? _batteryTimer;
   Timer? _connectionTimeoutTimer;
+  Timer? _zoomThrottleTimer;
+  double? _pendingZoomTarget;
   DateTime? _streamStartTime;
   DateTime _lastBitrateUpdateTime = DateTime.now();
   bool _isStoppingStream = false;
@@ -181,9 +183,20 @@ class _BroadcastViewState extends State<BroadcastView> {
   Future<void> _setZoom(double value) async {
     final clamped = value.clamp(_minZoom, _maxZoom);
     setState(() => _zoom = clamped);
-    try {
-      await _channel.invokeMethod('setZoom', {'zoom': clamped});
-    } catch (_) {}
+    _pendingZoomTarget = clamped;
+
+    if (_zoomThrottleTimer?.isActive == true) {
+      return;
+    }
+
+    _zoomThrottleTimer = Timer(const Duration(milliseconds: 30), () async {
+      final target = _pendingZoomTarget;
+      if (target != null) {
+        try {
+          await _channel.invokeMethod('setZoom', {'zoom': target});
+        } catch (_) {}
+      }
+    });
   }
 
   Future<void> _initNativeStream() async {
@@ -452,72 +465,119 @@ class _BroadcastViewState extends State<BroadcastView> {
     showDialog(
       context: context,
       builder: (context) {
+        final screenWidth = MediaQuery.of(context).size.width;
+        final screenHeight = MediaQuery.of(context).size.height;
+
         return DefaultTabController(
           length: 2,
           child: Dialog(
-            backgroundColor: const Color(0xFF0F172A),
+            backgroundColor: const Color(0xFF0B1120),
+            surfaceTintColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: const BorderSide(color: Color(0xFF1E293B), width: 1.2),
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFF1E293B), width: 1.0),
             ),
             child: Container(
-              width: MediaQuery.of(context).size.width * 0.7,
-              height: MediaQuery.of(context).size.height * 0.8,
-              padding: const EdgeInsets.all(20),
+              width: screenWidth > 600 ? 520 : screenWidth * 0.85,
+              height: screenHeight > 450 ? 360 : screenHeight * 0.88,
+              padding: const EdgeInsets.all(16),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Modal Title Bar & Tab Navigation
+                  // 1. Header Bar
                   Row(
                     children: [
-                      const Icon(Icons.linked_camera_rounded, color: Color(0xFF10B981), size: 22),
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.videocam_rounded, color: Color(0xFF10B981), size: 18),
+                      ),
                       const SizedBox(width: 10),
                       const Text(
-                        "Camera Source Selection",
+                        "Camera Source",
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
                         ),
                       ),
                       const Spacer(),
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close_rounded, color: Color(0xFF94A3B8), size: 20),
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () => Navigator.of(context).pop(),
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF1E293B),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.close_rounded, color: Color(0xFF94A3B8), size: 16),
+                          ),
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
 
-                  // Tab Selector Header
+                  // 2. Minimal Tab Selector (No Emojis, Pure Material Icons)
                   Container(
-                    height: 40,
+                    height: 38,
+                    padding: const EdgeInsets.all(3),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF050811),
+                      color: const Color(0xFF030712),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: const Color(0xFF1E293B), width: 1),
                     ),
-                    child: const TabBar(
-                      indicatorColor: Color(0xFF10B981),
+                    child: TabBar(
+                      indicator: BoxDecoration(
+                        color: const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(7),
+                        border: Border.all(color: const Color(0xFF334155), width: 0.8),
+                      ),
                       indicatorSize: TabBarIndicatorSize.tab,
-                      labelColor: Color(0xFF10B981),
-                      unselectedLabelColor: Color(0xFF64748B),
-                      labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                      tabs: [
-                        Tab(text: "📱 Built-in Lenses"),
-                        Tab(text: "🔌 External USB Webcams (OTG)"),
+                      labelColor: const Color(0xFF10B981),
+                      unselectedLabelColor: const Color(0xFF64748B),
+                      dividerColor: Colors.transparent,
+                      labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                      unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
+                      tabs: const [
+                        Tab(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.smartphone_rounded, size: 15),
+                              SizedBox(width: 6),
+                              Text("Internal Lenses"),
+                            ],
+                          ),
+                        ),
+                        Tab(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.usb_rounded, size: 15),
+                              SizedBox(width: 6),
+                              Text("External USB"),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
-                  // Tab Views
+                  // 3. Tab Views
                   Expanded(
                     child: TabBarView(
                       children: [
-                        // TAB 1: Built-in Phone Lenses
                         _buildInternalLensesList(),
-
-                        // TAB 2: USB OTG Webcams
                         _buildExternalWebcamsList(),
                       ],
                     ),
@@ -535,12 +595,21 @@ class _BroadcastViewState extends State<BroadcastView> {
     final internalCams = _availableCameras.where((c) => c['facing']?.toLowerCase() != 'external').toList();
 
     if (internalCams.isEmpty) {
-      return const Center(
-        child: Text("No built-in camera sensors detected", style: TextStyle(color: Color(0xFF64748B))),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.camera_alt_outlined, color: Color(0xFF475569), size: 28),
+            SizedBox(height: 8),
+            Text("No camera sensors detected", style: TextStyle(color: Color(0xFF64748B), fontSize: 12)),
+          ],
+        ),
       );
     }
 
     return ListView.builder(
+      physics: const BouncingScrollPhysics(),
+      padding: EdgeInsets.zero,
       itemCount: internalCams.length,
       itemBuilder: (context, index) {
         final camera = internalCams[index];
@@ -561,36 +630,38 @@ class _BroadcastViewState extends State<BroadcastView> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 44,
-                height: 44,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF1E293B),
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B).withValues(alpha: 0.6),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.usb_off_rounded, color: Color(0xFF64748B), size: 22),
+                child: const Icon(Icons.usb_off_rounded, color: Color(0xFF64748B), size: 20),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                "No USB Webcam Detected",
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                "Connect a USB camera via OTG adapter to stream.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 11),
               ),
               const SizedBox(height: 10),
-              const Text(
-                "No USB OTG Webcam Detected",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                "Plug in a USB webcam via OTG adapter to stream from an external camera sensor.",
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
+              OutlinedButton.icon(
                 onPressed: () => _fetchAvailableCameras(),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF10B981),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF10B981),
+                  side: const BorderSide(color: Color(0xFF10B981), width: 1),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
-                icon: const Icon(Icons.refresh_rounded, size: 14),
-                label: const Text("Rescan USB Webcams", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                icon: const Icon(Icons.refresh_rounded, size: 13),
+                label: const Text("Rescan USB Devices", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11)),
               ),
             ],
           ),
@@ -599,6 +670,8 @@ class _BroadcastViewState extends State<BroadcastView> {
     }
 
     return ListView.builder(
+      physics: const BouncingScrollPhysics(),
+      padding: EdgeInsets.zero,
       itemCount: externalCams.length,
       itemBuilder: (context, index) {
         final camera = externalCams[index];
@@ -618,7 +691,7 @@ class _BroadcastViewState extends State<BroadcastView> {
     final focalLength = camera['focalLength'];
     final isPhys = camera['isPhysical'] == 'true';
 
-    final resLabel = maxW >= 3840 ? '4K UHD' : maxW >= 1920 ? '1080p FHD' : maxW >= 1280 ? '720p HD' : '$maxW x $maxH';
+    final resLabel = maxW >= 3840 ? '4K' : maxW >= 1920 ? '1080p' : maxW >= 1280 ? '720p' : maxW > 0 ? '${maxW}p' : maxH > 0 ? '${maxH}p' : 'Auto';
 
     IconData cameraIcon;
     if (facing.toLowerCase() == 'front') {
@@ -633,100 +706,135 @@ class _BroadcastViewState extends State<BroadcastView> {
       cameraIcon = Icons.camera_rear_rounded;
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.12) : const Color(0xFF050811),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isSelected ? const Color(0xFF10B981) : const Color(0xFF1E293B),
-          width: isSelected ? 1.5 : 1.0,
-        ),
-      ),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.2) : const Color(0xFF1E293B),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            cameraIcon,
-            color: isSelected ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
-            size: 20,
+    return InkWell(
+      onTap: () {
+        Navigator.of(context).pop();
+        _switchCameraTo(camera['id']!);
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.1) : const Color(0xFF030712),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF10B981) : const Color(0xFF1E293B),
+            width: isSelected ? 1.2 : 0.8,
           ),
         ),
-        title: Row(
+        child: Row(
           children: [
-            Text(
-              "$lensType ($facing)",
-              style: TextStyle(
-                color: isSelected ? Colors.white : const Color(0xFFE2E8F0),
-                fontSize: 13.5,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+            // Left Icon Squircle
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF10B981).withValues(alpha: 0.2) : const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                cameraIcon,
+                color: isSelected ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+                size: 17,
               ),
             ),
-            if (isPhys) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF3B82F6).withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: const Color(0xFF3B82F6), width: 0.6),
-                ),
-                child: const Text(
-                  "PHYSICAL LENS",
-                  style: TextStyle(color: Color(0xFF60A5FA), fontSize: 8.5, fontWeight: FontWeight.bold),
-                ),
+            const SizedBox(width: 10),
+
+            // Camera Details Column
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          lensType,
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : const Color(0xFFE2E8F0),
+                            fontSize: 13,
+                            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          facing.toUpperCase(),
+                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 8.5, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      if (isPhys) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF3B82F6).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.5), width: 0.5),
+                          ),
+                          child: const Text(
+                            "SENSOR",
+                            style: TextStyle(color: Color(0xFF60A5FA), fontSize: 8, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+
+                  // Metadata Badges Row
+                  Row(
+                    children: [
+                      Text(
+                        resLabel,
+                        style: const TextStyle(color: Color(0xFF64748B), fontSize: 10.5, fontWeight: FontWeight.w500),
+                      ),
+                      if (fov != null && fov != '0') ...[
+                        const Text("  •  ", style: TextStyle(color: Color(0xFF334155), fontSize: 9)),
+                        Text(
+                          "$fov° FOV",
+                          style: const TextStyle(color: Color(0xFF10B981), fontSize: 10.5, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                      if (focalLength != null && focalLength != '0.0') ...[
+                        const Text("  •  ", style: TextStyle(color: Color(0xFF334155), fontSize: 9)),
+                        Text(
+                          "${focalLength}mm",
+                          style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                      if (hasAF) ...[
+                        const Text("  •  ", style: TextStyle(color: Color(0xFF334155), fontSize: 9)),
+                        const Text(
+                          "AF",
+                          style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10.5, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
               ),
-            ],
+            ),
+
+            // Selection Indicator
+            if (isSelected)
+              const Padding(
+                padding: EdgeInsets.only(left: 6),
+                child: Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 18),
+              ),
           ],
         ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4.0),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
-                child: Text(resLabel, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
-              ),
-              if (fov != null && fov != '0')
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
-                  child: Text("$fov° FOV", style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w600)),
-                ),
-              if (focalLength != null && focalLength != '0.0')
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
-                  child: Text("${focalLength}mm", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.w600)),
-                ),
-              if (hasAF)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(4)),
-                  child: const Text("AF", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
-                ),
-            ],
-          ),
-        ),
-        trailing: isSelected
-            ? Container(
-                padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle),
-                child: const Icon(Icons.check_rounded, color: Colors.white, size: 14),
-              )
-            : null,
-        onTap: () {
-          Navigator.of(context).pop();
-          _switchCameraTo(camera['id']!);
-        },
       ),
     );
   }
@@ -816,6 +924,7 @@ class _BroadcastViewState extends State<BroadcastView> {
     _uptimeTimer?.cancel();
     _batteryTimer?.cancel();
     _connectionTimeoutTimer?.cancel();
+    _zoomThrottleTimer?.cancel();
     if (_isStreamingNotifier.value) {
       _syncStateToFirestore(isLive: false);
     }
@@ -832,26 +941,34 @@ class _BroadcastViewState extends State<BroadcastView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF030712),
       body: Stack(
         children: [
-          // 1. Native Camera Viewport
+          // 1. Native Camera Viewport — Centered 16:9 TVU-Style Viewfinder Cutout
           Positioned.fill(
-            child: _isNativeInitialized
-                ? const NativeCameraPreview()
-                : Container(
-                    color: const Color(0xFF050811),
-                    child: const Center(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: _isNativeInitialized
+                      ? const NativeCameraPreview()
+                      : Container(
+                          color: const Color(0xFF050811),
+                          child: const Center(
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
+                ),
+              ),
+            ),
           ),
 
           // 2. Edge Vignette Shading
@@ -881,94 +998,133 @@ class _BroadcastViewState extends State<BroadcastView> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  // TOP LANDSCAPE TELEMETRY HUD BAR
+                  // TOP COMPACT BROADCAST STATUS CAPSULE
                   Positioned(
-                    top: 14,
-                    left: 80,
-                    right: 80,
-                    child: ValueListenableBuilder<TelemetryState>(
-                      valueListenable: _telemetryNotifier,
-                      builder: (context, telemetry, child) {
-                        final isLive = telemetry.streamStatus == "Live";
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                          decoration: BoxDecoration(
-                            color: _hudBgColor,
-                            borderRadius: BorderRadius.circular(20.0),
-                            border: Border.all(color: _hudBorderColor, width: 1.2),
-                            boxShadow: const [
-                              BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, 4)),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              // Transmission State
-                              Row(
-                                children: [
-                                  const Icon(Icons.sensors_rounded, size: 14, color: Color(0xFF10B981)),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    telemetry.streamStatus.toUpperCase(),
-                                    style: TextStyle(
-                                      color: isLive
-                                          ? const Color(0xFF10B981)
-                                          : (telemetry.streamStatus.contains("Connecting")
-                                              ? const Color(0xFF34D399)
-                                              : Colors.white),
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ],
+                    top: 6,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: ValueListenableBuilder<TelemetryState>(
+                        valueListenable: _telemetryNotifier,
+                        builder: (context, telemetry, child) {
+                          final isLive = telemetry.streamStatus == "Live";
+                          final isConnecting = telemetry.streamStatus.contains("Connecting");
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
+                            decoration: BoxDecoration(
+                              color: const Color(0xCC030712),
+                              borderRadius: BorderRadius.circular(14.0),
+                              border: Border.all(
+                                color: isLive ? const Color(0xFF10B981).withValues(alpha: 0.4) : const Color(0xFF1E293B),
+                                width: 0.8,
                               ),
-                              Container(width: 1, height: 16, color: const Color(0xFF1E293B)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // 1. Status Indicator Dot + Text
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isLive
+                                        ? const Color(0xFF10B981)
+                                        : isConnecting
+                                            ? const Color(0xFFF59E0B)
+                                            : const Color(0xFF475569),
+                                    boxShadow: isLive
+                                        ? [BoxShadow(color: const Color(0xFF10B981).withValues(alpha: 0.6), blurRadius: 4)]
+                                        : null,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  telemetry.streamStatus.toUpperCase(),
+                                  style: TextStyle(
+                                    color: isLive
+                                        ? const Color(0xFF10B981)
+                                        : isConnecting
+                                            ? const Color(0xFFF59E0B)
+                                            : const Color(0xFF94A3B8),
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
 
-                              // Uptime
-                              Row(
-                                children: [
-                                  const Icon(Icons.timer_rounded, size: 14, color: Color(0xFF38BDF8)),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    _formatDuration(telemetry.elapsedTime),
-                                    style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.bold),
-                                  ),
-                                ],
-                              ),
-                              Container(width: 1, height: 16, color: const Color(0xFF1E293B)),
+                                // Divider
+                                Container(
+                                  width: 1,
+                                  height: 10,
+                                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                                  color: const Color(0xFF334155),
+                                ),
 
-                              // Bitrate
-                              Row(
-                                children: [
-                                  const Icon(Icons.speed_rounded, size: 14, color: Color(0xFFF59E0B)),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    "${telemetry.currentBitrateKbps} KBPS",
-                                    style: const TextStyle(color: Color(0xFF10B981), fontSize: 11.5, fontWeight: FontWeight.bold),
+                                // 2. Timer Icon + Value
+                                const Icon(Icons.timer_rounded, size: 11, color: Color(0xFF38BDF8)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _formatDuration(telemetry.elapsedTime),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                ],
-                              ),
-                              Container(width: 1, height: 16, color: const Color(0xFF1E293B)),
+                                ),
 
-                              // Battery Level
-                              Row(
-                                children: [
-                                  Icon(
-                                    telemetry.batteryLevel > 20 ? Icons.battery_charging_full_rounded : Icons.battery_alert_rounded,
-                                    size: 14,
-                                    color: telemetry.batteryLevel > 20 ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                                // Divider
+                                Container(
+                                  width: 1,
+                                  height: 10,
+                                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                                  color: const Color(0xFF334155),
+                                ),
+
+                                // 3. Speed/Bitrate Icon + Value
+                                const Icon(Icons.speed_rounded, size: 11, color: Color(0xFFF59E0B)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  "${telemetry.currentBitrateKbps} KBPS",
+                                  style: const TextStyle(
+                                    color: Color(0xFF10B981),
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    "${telemetry.batteryLevel}%",
-                                    style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.bold),
+                                ),
+
+                                // Divider
+                                Container(
+                                  width: 1,
+                                  height: 10,
+                                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                                  color: const Color(0xFF334155),
+                                ),
+
+                                // 4. Battery Icon + Value
+                                Icon(
+                                  telemetry.batteryLevel > 20
+                                      ? Icons.battery_std_rounded
+                                      : Icons.battery_alert_rounded,
+                                  size: 11,
+                                  color: telemetry.batteryLevel > 20
+                                      ? const Color(0xFF10B981)
+                                      : const Color(0xFFEF4444),
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  "${telemetry.batteryLevel}%",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
 

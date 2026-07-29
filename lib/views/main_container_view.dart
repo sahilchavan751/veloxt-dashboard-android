@@ -53,53 +53,54 @@ class _MainContainerViewState extends State<MainContainerView> {
               ),
             ),
 
-            // 2. Floating Pill Navigation Bar
+            // 2. Left-Aligned Compact Floating Pill Navigation Bar
             Positioned(
               left: 20,
-              right: 20,
-              bottom: 24,
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 360),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(32),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                      child: Container(
-                        height: 64,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0F172A).withValues(alpha: 0.85),
-                          borderRadius: BorderRadius.circular(32),
-                          border: Border.all(
-                            color: const Color(0xFF1E293B).withValues(alpha: 0.9),
-                            width: 1.2,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            _buildNavItem(
-                              index: 0,
-                              icon: Icons.tune_rounded,
-                              label: "Setup",
-                              accentColor: accentColor,
-                            ),
-                            _buildNavItem(
-                              index: 1,
-                              icon: Icons.person_rounded,
-                              label: "Profile",
-                              accentColor: accentColor,
-                            ),
-                            _buildNavItem(
-                              index: 2,
-                              icon: Icons.settings_rounded,
-                              label: "Settings",
-                              accentColor: accentColor,
-                            ),
-                          ],
-                        ),
+              bottom: 20,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                  child: Container(
+                    height: 46,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A).withValues(alpha: 0.88),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: const Color(0xFF1E293B).withValues(alpha: 0.9),
+                        width: 1.0,
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildNavItem(
+                          index: 0,
+                          icon: Icons.tune_rounded,
+                          label: "Setup",
+                          accentColor: accentColor,
+                        ),
+                        _buildNavItem(
+                          index: 1,
+                          icon: Icons.person_rounded,
+                          label: "Profile",
+                          accentColor: accentColor,
+                        ),
+                        _buildNavItem(
+                          index: 2,
+                          icon: Icons.settings_rounded,
+                          label: "Settings",
+                          accentColor: accentColor,
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -122,22 +123,22 @@ class _MainContainerViewState extends State<MainContainerView> {
     return GestureDetector(
       onTap: () => _onTabTapped(index),
       behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 4.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedScale(
-              scale: isSelected ? 1.1 : 1.0,
+              scale: isSelected ? 1.05 : 0.95,
               duration: const Duration(milliseconds: 150),
               child: Icon(
                 icon,
                 color: isSelected ? accentColor : const Color(0xFF64748B),
-                size: 24,
+                size: 20,
               ),
             ),
-            const SizedBox(height: 4),
-            // Tiny active indicator dot or label
+            const SizedBox(height: 3),
             AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               width: isSelected ? 4 : 0,

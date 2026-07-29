@@ -298,187 +298,212 @@ class _SetupViewState extends State<SetupView> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Camera ID Field
+                              // 1. Camera ID Field
                               _buildCameraIdField(theme),
-                              const SizedBox(height: 24),
+                              const SizedBox(height: 20),
 
-                              // Stream Protocol Selector (RTMP / SRT)
-                              _buildSegmentSelector(
-                                label: "STREAM PROTOCOL",
-                                value: _streamType,
-                                options: const ["rtmp", "srt"],
-                                labels: const ["RTMP", "SRT"],
-                                onChanged: (value) {
-                                  setState(() {
-                                    _streamType = value;
-                                    // Update port to default for selected protocol
-                                    _srtPortController.text = value == "srt" ? "8890" : "1935";
-                                  });
-                                },
-                              ),
-                              const SizedBox(height: 24),
-
-                              // IP Version Selector (IPv4 / IPv6)
-                              _buildSegmentSelector(
-                                label: "NETWORK STACK",
-                                value: _ipVersion,
-                                options: const ["ipv4", "ipv6"],
-                                labels: const ["IPv4", "IPv6"],
-                                onChanged: (value) {
-                                  setState(() {
-                                    _ipVersion = value;
-                                  });
-                                },
-                              ),
-                              const SizedBox(height: 24),
-
-                              // MediaMTX Server IP Field
-                              Column(
+                              // 2. Side-by-Side Protocol & Network Stack Row
+                              Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    "SERVER IP OR HOST",
-                                    style: TextStyle(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF94A3B8),
-                                      letterSpacing: 1.2,
+                                  Expanded(
+                                    child: _buildSegmentSelector(
+                                      label: "PROTOCOL",
+                                      value: _streamType,
+                                      options: const ["rtmp", "srt"],
+                                      labels: const ["RTMP", "SRT"],
+                                      onChanged: (value) {
+                                        setState(() {
+                                          _streamType = value;
+                                          _srtPortController.text = value == "srt" ? "8890" : "1935";
+                                        });
+                                      },
                                     ),
                                   ),
-                                  const SizedBox(height: 8),
-                                  TextFormField(
-                                    controller: _serverIpController,
-                                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                                    decoration: InputDecoration(
-                                      hintText: _ipVersion == "ipv6" ? "e.g., 2001:db8::1" : "e.g., 10.0.2.2",
-                                      hintStyle: const TextStyle(color: Color(0xFF475569)),
-                                      filled: true,
-                                      fillColor: const Color(0xFF0F172A),
-                                      contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 16,
-                                      ),
-                                      helperText: _ipVersion == "ipv6"
-                                          ? "Enter an IPv6 address or hostname"
-                                          : "Use 10.0.2.2 for local host from emulator",
-                                      helperStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
-                                      border: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide.none,
-                                      ),
-                                      enabledBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.2),
-                                      ),
-                                      focusedBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
-                                      ),
-                                      errorBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.2),
-                                      ),
-                                      focusedErrorBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.5),
-                                      ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildSegmentSelector(
+                                      label: "STACK",
+                                      value: _ipVersion,
+                                      options: const ["ipv4", "ipv6"],
+                                      labels: const ["IPv4", "IPv6"],
+                                      onChanged: (value) {
+                                        setState(() {
+                                          _ipVersion = value;
+                                        });
+                                      },
                                     ),
-                                    validator: (value) {
-                                      if (value == null || value.trim().isEmpty) {
-                                        return "Server IP is required";
-                                      }
-                                      return null;
-                                    },
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 24),
+                              const SizedBox(height: 20),
 
-                              // Dynamic Port Field (RTMP or SRT)
-                              Column(
+                              // 3. Side-by-Side Server IP & Port Row
+                              Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    _streamType == "srt" ? "SRT TARGET PORT" : "RTMP TARGET PORT",
-                                    style: const TextStyle(
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF94A3B8),
-                                      letterSpacing: 1.2,
+                                  // Server IP / Host (Flex 7)
+                                  Expanded(
+                                    flex: 7,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          "SERVER IP / HOST",
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF94A3B8),
+                                            letterSpacing: 1.0,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        TextFormField(
+                                          controller: _serverIpController,
+                                          style: const TextStyle(fontSize: 13.5, color: Colors.white),
+                                          decoration: InputDecoration(
+                                            hintText: _ipVersion == "ipv6" ? "2001:db8::1" : "10.0.2.2",
+                                            hintStyle: const TextStyle(color: Color(0xFF475569)),
+                                            filled: true,
+                                            fillColor: const Color(0xFF0F172A),
+                                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                            border: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            enabledBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.0),
+                                            ),
+                                            focusedBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
+                                            ),
+                                            errorBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.0),
+                                            ),
+                                            focusedErrorBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.5),
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.trim().isEmpty) {
+                                              return "IP required";
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 8),
-                                  TextFormField(
-                                    controller: _srtPortController,
-                                    keyboardType: TextInputType.number,
-                                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                                    decoration: InputDecoration(
-                                      hintText: _streamType == "srt" ? "8890" : "1935",
-                                      hintStyle: const TextStyle(color: Color(0xFF475569)),
-                                      filled: true,
-                                      fillColor: const Color(0xFF0F172A),
-                                      contentPadding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 16,
-                                      ),
-                                      helperText: _streamType == "srt"
-                                          ? "Default MediaMTX SRT port is 8890"
-                                          : "Default MediaMTX RTMP port is 1935",
-                                      helperStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
-                                      border: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide.none,
-                                      ),
-                                      enabledBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.2),
-                                      ),
-                                      focusedBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
-                                      ),
-                                      errorBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.2),
-                                      ),
-                                      focusedErrorBorder: const OutlineInputBorder(
-                                        borderRadius: BorderRadius.all(Radius.circular(12)),
-                                        borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.5),
-                                      ),
+                                  const SizedBox(width: 10),
+
+                                  // Target Port (Flex 4)
+                                  Expanded(
+                                    flex: 4,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _streamType == "srt" ? "SRT PORT" : "RTMP PORT",
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: Color(0xFF94A3B8),
+                                            letterSpacing: 1.0,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        TextFormField(
+                                          controller: _srtPortController,
+                                          keyboardType: TextInputType.number,
+                                          style: const TextStyle(fontSize: 13.5, color: Colors.white),
+                                          decoration: InputDecoration(
+                                            hintText: _streamType == "srt" ? "8890" : "1935",
+                                            hintStyle: const TextStyle(color: Color(0xFF475569)),
+                                            filled: true,
+                                            fillColor: const Color(0xFF0F172A),
+                                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                            border: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            enabledBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFF1E293B), width: 1.0),
+                                            ),
+                                            focusedBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFF10B981), width: 1.5),
+                                            ),
+                                            errorBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.0),
+                                            ),
+                                            focusedErrorBorder: const OutlineInputBorder(
+                                              borderRadius: BorderRadius.all(Radius.circular(10)),
+                                              borderSide: BorderSide(color: Color(0xFFEF4444), width: 1.5),
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.trim().isEmpty) {
+                                              return "Required";
+                                            }
+                                            final val = int.tryParse(value);
+                                            if (val == null || val <= 0 || val > 65535) {
+                                              return "Invalid";
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ],
                                     ),
-                                    validator: (value) {
-                                      if (value == null || value.trim().isEmpty) {
-                                        return "Port is required";
-                                      }
-                                      final val = int.tryParse(value);
-                                      if (val == null || val <= 0 || val > 65535) {
-                                        return "Enter a valid port (1 - 65535)";
-                                      }
-                                      return null;
-                                    },
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 36),
+                              const SizedBox(height: 6),
+                              Text(
+                                _ipVersion == "ipv6"
+                                    ? "IPv6 host address • Default ${_streamType.toUpperCase()} port is ${_streamType == "srt" ? "8890" : "1935"}"
+                                    : "Use 10.0.2.2 for emulator • Default ${_streamType.toUpperCase()} port is ${_streamType == "srt" ? "8890" : "1935"}",
+                                style: const TextStyle(color: Color(0xFF64748B), fontSize: 10.5),
+                              ),
+                              const SizedBox(height: 28),
 
-                              // Premium Proceed Button
+                              // Minimal Primary Action Button
                               _InteractiveButton(
                                 onPressed: _handleProceed,
                                 child: Container(
-                                  height: 52,
+                                  height: 48,
                                   alignment: Alignment.center,
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF10B981),
-                                    borderRadius: BorderRadius.circular(12),
+                                    borderRadius: BorderRadius.circular(10),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFF10B981).withValues(alpha: 0.25),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 3),
+                                      ),
+                                    ],
                                   ),
-                                  child: const Text(
-                                    "Configure Preview & Connect",
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14.5,
-                                      color: Colors.white,
-                                      letterSpacing: 0.2,
-                                    ),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.sensors_rounded, size: 18, color: Colors.white),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        "Configure Preview & Connect",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 14,
+                                          color: Colors.white,
+                                          letterSpacing: 0.2,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
