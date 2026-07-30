@@ -241,6 +241,30 @@ class UpdateService {
     String apkUrl,
     String version,
   ) async {
+    const platform = MethodChannel('com.custom.srt_stream/control');
+    final tempDir = Directory.systemTemp;
+    final apkFile = File('${tempDir.path}/veloxt_update_v$version.apk');
+
+    // Delete any older version APKs to keep storage clean
+    try {
+      final files = tempDir.listSync();
+      for (final f in files) {
+        if (f is File && f.path.contains('veloxt_update_v') && !f.path.endsWith('v$version.apk')) {
+          f.deleteSync();
+        }
+      }
+    } catch (_) {}
+
+    // If the APK for this exact version is already fully downloaded in cache, launch installer directly!
+    if (apkFile.existsSync() && apkFile.lengthSync() > 0) {
+      try {
+        await platform.invokeMethod('installApk', {'path': apkFile.path});
+        return;
+      } catch (_) {
+        // If launch failed, fall through to re-download fresh copy
+      }
+    }
+
     // Show a persistent download progress overlay
     final overlayEntry = OverlayEntry(
       builder: (context) => _DownloadProgressOverlay(
@@ -260,8 +284,6 @@ class UpdateService {
       request.followRedirects = true;
       final response = await request.close();
 
-      final tempDir = Directory.systemTemp;
-      final apkFile = File('${tempDir.path}/veloxt_update_v$version.apk');
       final sink = apkFile.openWrite();
       await response.pipe(sink);
       await sink.close();
@@ -270,7 +292,6 @@ class UpdateService {
       overlayEntry.remove();
 
       // Trigger Android installer via platform channel
-      const platform = MethodChannel('com.custom.srt_stream/control');
       await platform.invokeMethod('installApk', {'path': apkFile.path});
     } catch (e) {
       overlayEntry.remove();
