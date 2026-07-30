@@ -26,9 +26,13 @@ class _MainContainerViewState extends State<MainContainerView> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
-    // Check for app updates from GitHub Releases after the first frame renders
+    // Check for app updates in the background 2 seconds after launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      UpdateService.checkForUpdate(context);
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          UpdateService.checkForUpdate(context);
+        }
+      });
     });
   }
 

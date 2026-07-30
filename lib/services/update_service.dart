@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -15,22 +16,44 @@ class UpdateService {
   static const String _apiUrl =
       'https://api.github.com/repos/$_githubOwner/$_githubRepo/releases/latest';
 
-  /// Call this on app launch to silently check for updates.
-  /// Shows a dialog only if a new version is available.
-  static Future<void> checkForUpdate(BuildContext context) async {
+  /// Call this on app launch or from Settings button to check for updates.
+  /// Shows a dialog if a new version is available, or feedback if manual check.
+  static Future<void> checkForUpdate(
+    BuildContext context, {
+    bool isManualCheck = false,
+  }) async {
     try {
       final packageInfo = await PackageInfo.fromPlatform();
-      final currentVersion = packageInfo.version; // e.g. "1.0.0"
+      final currentVersion = packageInfo.version; // e.g. "2.2.2"
 
       final response = await http.get(
         Uri.parse(_apiUrl),
-        headers: {'Accept': 'application/vnd.github.v3+json'},
-      ).timeout(const Duration(seconds: 8));
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Veloxt-App-Android',
+        },
+      ).timeout(Duration(seconds: isManualCheck ? 15 : 5));
 
-      if (response.statusCode != 200) return;
+      if (response.statusCode != 200) {
+        if (isManualCheck && context.mounted) {
+          String message = 'Could not reach GitHub update server.';
+          if (response.statusCode == 404) {
+            message = 'No published releases found on GitHub yet.';
+          } else if (response.statusCode == 403) {
+            message = 'GitHub API rate limit reached. Please try again later.';
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              backgroundColor: const Color(0xFFEF4444),
+            ),
+          );
+        }
+        return;
+      }
 
       final Map<String, dynamic> release = jsonDecode(response.body);
-      final String tagName = release['tag_name'] ?? ''; // e.g. "v1.0.1"
+      final String tagName = release['tag_name'] ?? ''; // e.g. "v2.2.2"
       final String latestVersion = tagName.replaceFirst('v', '');
       final String releaseName = release['name'] ?? 'New Update';
       final String body = release['body'] ?? '';
@@ -46,13 +69,63 @@ class UpdateService {
         }
       }
 
-      if (!_isNewerVersion(currentVersion, latestVersion)) return;
-      if (apkUrl == null) return;
+      if (!_isNewerVersion(currentVersion, latestVersion)) {
+        if (isManualCheck && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Veloxt is up to date (v$currentVersion)'),
+                ],
+              ),
+              backgroundColor: const Color(0xFF10B981),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (apkUrl == null) {
+        if (isManualCheck && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Latest release does not have an APK file attached.'),
+              backgroundColor: Color(0xFFF59E0B),
+            ),
+          );
+        }
+        return;
+      }
+
       if (!context.mounted) return;
 
       _showUpdateDialog(context, latestVersion, releaseName, body, apkUrl);
+    } on TimeoutException {
+      debugPrint('Update check timed out');
+      if (isManualCheck && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Network timeout: Could not connect to GitHub. Please check your internet.'),
+            backgroundColor: Color(0xFFEF4444),
+          ),
+        );
+      }
     } catch (e) {
-      debugPrint('Update check failed (non-fatal): $e');
+      debugPrint('Update check failed: $e');
+      if (isManualCheck && context.mounted) {
+        final errStr = e.toString().contains('SocketException')
+            ? 'No internet connection. Please check your network.'
+            : 'Update check failed: $e';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errStr),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
+      }
     }
   }
 
