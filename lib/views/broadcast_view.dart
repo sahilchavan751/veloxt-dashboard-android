@@ -44,13 +44,7 @@ class _BroadcastViewState extends State<BroadcastView> {
   static const MethodChannel _channel = MethodChannel('com.custom.srt_stream/control');
   final Battery _battery = Battery();
 
-  // Premium glassmorphic color palette
-  static const Color _overlayDarkTop = Color(0xAA050811);
-  static const Color _overlayDarkBottom = Color(0xC8050811);
-  static const Color _hudBgColor = Color(0xE60F172A); // Slate dark 90%
-  static const Color _hudBorderColor = Color(0xFF1E293B);
-  static const Color _buttonBgColor = Color(0xD90F172A);
-  static const Color _buttonBorderColor = Color(0x33FFFFFF);
+
 
   bool _isNativeInitialized = false;
 
@@ -91,6 +85,8 @@ class _BroadcastViewState extends State<BroadcastView> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    // Reinforce full-screen immersive after orientation switch
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
     _telemetryNotifier = ValueNotifier<TelemetryState>(TelemetryState(
       elapsedTime: Duration.zero,
@@ -921,6 +917,7 @@ class _BroadcastViewState extends State<BroadcastView> {
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _uptimeTimer?.cancel();
     _batteryTimer?.cancel();
     _connectionTimeoutTimer?.cancel();
@@ -942,447 +939,442 @@ class _BroadcastViewState extends State<BroadcastView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF030712),
-      body: Stack(
-        children: [
-          // 1. Native Camera Viewport — Centered 16:9 TVU-Style Viewfinder Cutout
-          Positioned.fill(
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: _isNativeInitialized
-                      ? const NativeCameraPreview()
-                      : Container(
-                          color: const Color(0xFF050811),
-                          child: const Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+      body: SafeArea(
+        child: Container(
+          color: const Color(0xFF030712),
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: Stack(
+                  children: [
+                    // ── 1. NATIVE CAMERA VIEWPORT ──
+                    Positioned.fill(
+                      child: _isNativeInitialized
+                          ? const NativeCameraPreview()
+                          : Container(
+                              color: const Color(0xFF050811),
+                              child: const Center(
+                                child: SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF10B981)),
+                                  ),
+                                ),
                               ),
+                            ),
+                    ),
+
+                    // ── 2. SUBTLE TOP/BOTTOM VIGNETTE ──
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Color(0x99000000),
+                                Colors.transparent,
+                                Colors.transparent,
+                                Color(0x66000000),
+                              ],
+                              stops: [0.0, 0.18, 0.82, 1.0],
                             ),
                           ),
                         ),
-                ),
-              ),
-            ),
-          ),
-
-          // 2. Edge Vignette Shading
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      _overlayDarkTop,
-                      Colors.transparent,
-                      Colors.transparent,
-                      _overlayDarkBottom,
-                    ],
-                    stops: [0.0, 0.25, 0.7, 1.0],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // 3. UI Overlays (wrapped in SafeArea to prevent status bar/notch overlap)
-          Positioned.fill(
-            child: SafeArea(
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // TOP COMPACT BROADCAST STATUS CAPSULE
-                  Positioned(
-                    top: 6,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: ValueListenableBuilder<TelemetryState>(
-                        valueListenable: _telemetryNotifier,
-                        builder: (context, telemetry, child) {
-                          final isLive = telemetry.streamStatus == "Live";
-                          final isConnecting = telemetry.streamStatus.contains("Connecting");
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
-                            decoration: BoxDecoration(
-                              color: const Color(0xCC030712),
-                              borderRadius: BorderRadius.circular(14.0),
-                              border: Border.all(
-                                color: isLive ? const Color(0xFF10B981).withValues(alpha: 0.4) : const Color(0xFF1E293B),
-                                width: 0.8,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // 1. Status Indicator Dot + Text
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: isLive
-                                        ? const Color(0xFF10B981)
-                                        : isConnecting
-                                            ? const Color(0xFFF59E0B)
-                                            : const Color(0xFF475569),
-                                    boxShadow: isLive
-                                        ? [BoxShadow(color: const Color(0xFF10B981).withValues(alpha: 0.6), blurRadius: 4)]
-                                        : null,
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  telemetry.streamStatus.toUpperCase(),
-                                  style: TextStyle(
-                                    color: isLive
-                                        ? const Color(0xFF10B981)
-                                        : isConnecting
-                                            ? const Color(0xFFF59E0B)
-                                            : const Color(0xFF94A3B8),
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.3,
-                                  ),
-                                ),
-
-                                // Divider
-                                Container(
-                                  width: 1,
-                                  height: 10,
-                                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                                  color: const Color(0xFF334155),
-                                ),
-
-                                // 2. Timer Icon + Value
-                                const Icon(Icons.timer_rounded, size: 11, color: Color(0xFF38BDF8)),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _formatDuration(telemetry.elapsedTime),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-
-                                // Divider
-                                Container(
-                                  width: 1,
-                                  height: 10,
-                                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                                  color: const Color(0xFF334155),
-                                ),
-
-                                // 3. Speed/Bitrate Icon + Value
-                                const Icon(Icons.speed_rounded, size: 11, color: Color(0xFFF59E0B)),
-                                const SizedBox(width: 4),
-                                Text(
-                                  "${telemetry.currentBitrateKbps} KBPS",
-                                  style: const TextStyle(
-                                    color: Color(0xFF10B981),
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-
-                                // Divider
-                                Container(
-                                  width: 1,
-                                  height: 10,
-                                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                                  color: const Color(0xFF334155),
-                                ),
-
-                                // 4. Battery Icon + Value
-                                Icon(
-                                  telemetry.batteryLevel > 20
-                                      ? Icons.battery_std_rounded
-                                      : Icons.battery_alert_rounded,
-                                  size: 11,
-                                  color: telemetry.batteryLevel > 20
-                                      ? const Color(0xFF10B981)
-                                      : const Color(0xFFEF4444),
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  "${telemetry.batteryLevel}%",
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
                       ),
                     ),
-                  ),
 
-                  // 4. LEFT STUDIO DOCK (Navigation, Live Badge, Camera Node, Zoom Button)
-                  Positioned(
-                    left: 16,
-                    top: 14,
-                    bottom: 14,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // Back Button
-                        _InteractiveButton(
-                          onPressed: () async {
-                            if (_isStreamingNotifier.value) {
-                              await _toggleStream();
-                              if (!context.mounted) return;
-                              Navigator.of(context).pop();
-                            } else {
-                              Navigator.of(context).pop();
-                            }
-                          },
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: _buttonBgColor,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: _buttonBorderColor, width: 0.8),
-                            ),
-                            alignment: Alignment.center,
-                            child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 16),
-                          ),
-                        ),
+                    // ── 3. UI OVERLAYS (all inside 16:9) ──
+                    Positioned.fill(
+                      child: Stack(
+                        children: [
 
-                        // Standby / Live Indicator Badge
-                        ValueListenableBuilder<bool>(
-                          valueListenable: _isStreamingNotifier,
-                          builder: (context, isLive, child) {
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: isLive ? const Color(0xFFEF4444).withValues(alpha: 0.2) : _buttonBgColor,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: isLive ? const Color(0xFFEF4444).withValues(alpha: 0.4) : _buttonBorderColor,
-                                  width: 0.8,
-                                ),
+                          // ━━━ TOP STATUS BAR ━━━
+                          Positioned(
+                            top: 6,
+                            left: 0,
+                            right: 0,
+                            child: Center(
+                              child: ValueListenableBuilder<TelemetryState>(
+                                valueListenable: _telemetryNotifier,
+                                builder: (context, telemetry, child) {
+                                  final isLive = telemetry.streamStatus == "Live";
+                                  final isConnecting = telemetry.streamStatus.contains("Connecting");
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xCC0F172A),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: isLive
+                                            ? const Color(0xFFEF4444).withValues(alpha: 0.3)
+                                            : const Color(0xFF1E293B),
+                                        width: 0.6,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        // Live / Standby Tag
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: isLive
+                                                ? const Color(0xFFEF4444)
+                                                : isConnecting
+                                                    ? const Color(0xFFF59E0B)
+                                                    : const Color(0xFF334155),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                isLive ? Icons.sensors_rounded : Icons.circle,
+                                                size: 8,
+                                                color: Colors.white,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                _formatDuration(telemetry.elapsedTime),
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+
+                                        // Resolution Tag
+                                        Text(
+                                          "${_height}p$_fps",
+                                          style: const TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+
+                                        // Divider
+                                        Container(
+                                          width: 1, height: 10,
+                                          margin: const EdgeInsets.symmetric(horizontal: 6),
+                                          color: const Color(0xFF334155),
+                                        ),
+
+                                        // Bitrate
+                                        const Icon(Icons.signal_cellular_alt_rounded, size: 10, color: Color(0xFF38BDF8)),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          "${telemetry.currentBitrateKbps}K",
+                                          style: const TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+
+                                        // Divider
+                                        Container(
+                                          width: 1, height: 10,
+                                          margin: const EdgeInsets.symmetric(horizontal: 6),
+                                          color: const Color(0xFF334155),
+                                        ),
+
+                                        // Battery
+                                        Icon(
+                                          telemetry.batteryLevel > 20
+                                              ? Icons.battery_std_rounded
+                                              : Icons.battery_alert_rounded,
+                                          size: 10,
+                                          color: telemetry.batteryLevel > 20
+                                              ? const Color(0xFF10B981)
+                                              : const Color(0xFFEF4444),
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          "${telemetry.batteryLevel}%",
+                                          style: const TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
                               ),
-                              child: Column(
+                            ),
+                          ),
+
+                          // ━━━ FLOATING BACK BUTTON (top-left) ━━━
+                          Positioned(
+                            top: 6,
+                            left: 8,
+                            child: _InteractiveButton(
+                              onPressed: () async {
+                                if (_isStreamingNotifier.value) {
+                                  await _toggleStream();
+                                  if (!context.mounted) return;
+                                  Navigator.of(context).pop();
+                                } else {
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xB30F172A),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: const Color(0x33FFFFFF), width: 0.6),
+                                ),
+                                alignment: Alignment.center,
+                                child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 14),
+                              ),
+                            ),
+                          ),
+
+                          // ━━━ CAMERA NODE TAG (bottom-left) ━━━
+                          Positioned(
+                            bottom: 8,
+                            left: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xB30F172A),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: const Color(0x33FFFFFF), width: 0.6),
+                              ),
+                              child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: BoxDecoration(
-                                      color: isLive ? const Color(0xFFEF4444) : const Color(0xFF64748B),
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
+                                  const Icon(Icons.videocam_rounded, size: 12, color: Color(0xFF10B981)),
+                                  const SizedBox(width: 4),
                                   Text(
-                                    isLive ? "LIVE" : "STBY",
-                                    style: TextStyle(
-                                      color: isLive ? const Color(0xFFEF4444) : const Color(0xFF64748B),
-                                      fontWeight: FontWeight.w800,
+                                    widget.cameraId.toUpperCase(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
                                       fontSize: 9,
-                                      letterSpacing: 0.8,
                                     ),
                                   ),
                                 ],
                               ),
-                            );
-                          },
-                        ),
-
-                        // Camera Node Badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: _buttonBgColor,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: _buttonBorderColor, width: 0.8),
-                          ),
-                          child: Column(
-                            children: [
-                              const Icon(Icons.videocam_rounded, size: 14, color: Color(0xFF10B981)),
-                              const SizedBox(height: 2),
-                              Text(
-                                widget.cameraId.toUpperCase(),
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 9.5),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        // Interactive Zoom Button (toggles zoom slider overlay)
-                        _InteractiveButton(
-                          onPressed: () {
-                            setState(() => _showZoomSlider = !_showZoomSlider);
-                          },
-                          child: Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: _showZoomSlider ? const Color(0xFF10B981) : _buttonBgColor,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: _buttonBorderColor, width: 0.8),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              "${_zoom.toStringAsFixed(1)}x",
-                              style: TextStyle(
-                                color: _showZoomSlider ? Colors.white : const Color(0xFF10B981),
-                                fontWeight: FontWeight.w800,
-                                fontSize: 11,
-                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
 
-                  // 5. VERTICAL ZOOM DRAG SLIDER OVERLAY
-                  if (_showZoomSlider)
-                    Positioned(
-                      left: 70,
-                      top: 50,
-                      bottom: 50,
-                      child: Container(
-                        width: 54,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: _hudBgColor,
-                          borderRadius: BorderRadius.circular(25),
-                          border: Border.all(color: _hudBorderColor, width: 1.2),
-                          boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 12)],
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            // Quick Zoom Preset Pills
-                            _buildZoomPresetPill(1.0, "1x"),
-                            _buildZoomPresetPill(2.0, "2x"),
-                            _buildZoomPresetPill(5.0, "5x"),
-                            const SizedBox(height: 8),
+                          // ━━━ RIGHT STUDIO CONTROL PANEL (glass sidebar) ━━━
+                          Positioned(
+                            right: 4,
+                            top: 4,
+                            bottom: 4,
+                            child: Container(
+                              width: 72,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xD90F172A),
+                                borderRadius: BorderRadius.circular(28),
+                                border: Border.all(color: const Color(0xFF1E293B), width: 0.8),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: [
+                                  // Camera
+                                  _buildPanelButton(
+                                    icon: Icons.linked_camera_rounded,
+                                    label: "Camera",
+                                    onTap: _openTabbedCameraModal,
+                                  ),
 
-                            // Continuous Vertical Zoom Slider
-                            Expanded(
-                              child: RotatedBox(
-                                quarterTurns: 3,
-                                child: Slider(
-                                  value: _zoom.clamp(_minZoom, _maxZoom),
-                                  min: _minZoom,
-                                  max: _maxZoom,
-                                  activeColor: const Color(0xFF10B981),
-                                  inactiveColor: const Color(0xFF1E293B),
-                                  onChanged: (val) => _setZoom(val),
+                                  // Mic
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable: _isMicMutedNotifier,
+                                    builder: (context, isMuted, child) {
+                                      return _buildPanelButton(
+                                        icon: isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                                        label: "Mic",
+                                        onTap: _toggleMic,
+                                        iconColor: isMuted ? const Color(0xFFEF4444) : null,
+                                        isActive: !isMuted,
+                                      );
+                                    },
+                                  ),
+
+                                  // GO LIVE — Prominent center button
+                                  ValueListenableBuilder<bool>(
+                                    valueListenable: _isStreamingNotifier,
+                                    builder: (context, isStreaming, child) {
+                                      return ValueListenableBuilder<bool>(
+                                        valueListenable: _isConnectingNotifier,
+                                        builder: (context, isConnecting, child) {
+                                          return _InteractiveButton(
+                                            onPressed: isConnecting ? null : _toggleStream,
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                AnimatedContainer(
+                                                  duration: const Duration(milliseconds: 200),
+                                                  width: 40,
+                                                  height: 40,
+                                                  decoration: BoxDecoration(
+                                                    color: isStreaming
+                                                        ? const Color(0xFFEF4444)
+                                                        : const Color(0xFFEF4444).withValues(alpha: 0.85),
+                                                    shape: BoxShape.circle,
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: const Color(0xFFEF4444).withValues(alpha: 0.4),
+                                                        blurRadius: 12,
+                                                        spreadRadius: 1,
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  alignment: Alignment.center,
+                                                  child: isConnecting
+                                                      ? const SizedBox(
+                                                          width: 16, height: 16,
+                                                          child: CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                                          ),
+                                                        )
+                                                      : Text(
+                                                          isStreaming ? "STOP" : "LIVE",
+                                                          style: const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 9,
+                                                            fontWeight: FontWeight.w900,
+                                                            letterSpacing: 0.5,
+                                                          ),
+                                                        ),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                      );
+                                    },
+                                  ),
+
+                                  // Zoom
+                                  _buildPanelButton(
+                                    icon: Icons.zoom_in_rounded,
+                                    label: "${_zoom.toStringAsFixed(1)}x",
+                                    onTap: () => setState(() => _showZoomSlider = !_showZoomSlider),
+                                    isActive: _showZoomSlider,
+                                  ),
+
+                                  // Settings
+                                  _buildPanelButton(
+                                    icon: Icons.tune_rounded,
+                                    label: "Settings",
+                                    onTap: _showSettingsPanel,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          // ━━━ VERTICAL ZOOM SLIDER OVERLAY ━━━
+                          if (_showZoomSlider)
+                            Positioned(
+                              right: 82,
+                              top: 20,
+                              bottom: 20,
+                              child: Container(
+                                width: 48,
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xE60F172A),
+                                  borderRadius: BorderRadius.circular(22),
+                                  border: Border.all(color: const Color(0xFF1E293B), width: 0.8),
+                                  boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 10)],
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    _buildZoomPresetPill(1.0, "1x"),
+                                    _buildZoomPresetPill(2.0, "2x"),
+                                    _buildZoomPresetPill(5.0, "5x"),
+                                    const SizedBox(height: 4),
+                                    Expanded(
+                                      child: RotatedBox(
+                                        quarterTurns: 3,
+                                        child: Slider(
+                                          value: _zoom.clamp(_minZoom, _maxZoom),
+                                          min: _minZoom,
+                                          max: _maxZoom,
+                                          activeColor: const Color(0xFF10B981),
+                                          inactiveColor: const Color(0xFF1E293B),
+                                          onChanged: (val) => _setZoom(val),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      "${_zoom.toStringAsFixed(1)}x",
+                                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              "${_zoom.toStringAsFixed(1)}x",
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
                     ),
-
-                  // 6. RIGHT STUDIO ACTION DOCK (Camera Picker, Mic Mute, Settings, Go Live)
-                  Positioned(
-                    right: 16,
-                    top: 14,
-                    bottom: 14,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        // Camera Sensor Switcher (Opens Tabbed Modal)
-                        _buildRoundOverlayButton(
-                          icon: Icons.linked_camera_rounded,
-                          onTap: _openTabbedCameraModal,
-                        ),
-
-                        // Microphone Toggle Button
-                        ValueListenableBuilder<bool>(
-                          valueListenable: _isMicMutedNotifier,
-                          builder: (context, isMuted, child) {
-                            return _buildRoundOverlayButton(
-                              icon: isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                              iconColor: isMuted ? const Color(0xFFEF4444) : const Color(0xFF10B981),
-                              onTap: _toggleMic,
-                            );
-                          },
-                        ),
-
-                        // Settings Panel Button
-                        _buildRoundOverlayButton(
-                          icon: Icons.tune_rounded,
-                          onTap: _showSettingsPanel,
-                        ),
-
-                        // Action Button: GO LIVE / STOP LIVE
-                        ValueListenableBuilder<bool>(
-                          valueListenable: _isStreamingNotifier,
-                          builder: (context, isStreaming, child) {
-                            return ValueListenableBuilder<bool>(
-                              valueListenable: _isConnectingNotifier,
-                              builder: (context, isConnecting, child) {
-                                return _InteractiveButton(
-                                  onPressed: isConnecting ? null : _toggleStream,
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 200),
-                                    height: 52,
-                                    width: 52,
-                                    alignment: Alignment.center,
-                                    decoration: BoxDecoration(
-                                      color: isStreaming ? const Color(0xFFEF4444) : const Color(0xFF10B981),
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: (isStreaming ? const Color(0xFFEF4444) : const Color(0xFF10B981))
-                                              .withValues(alpha: 0.35),
-                                          blurRadius: 15,
-                                          spreadRadius: 2,
-                                        ),
-                                      ],
-                                    ),
-                                    child: isConnecting
-                                        ? const SizedBox(
-                                            height: 20,
-                                            width: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2.2,
-                                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                            ),
-                                          )
-                                        : Icon(
-                                            isStreaming ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                                            color: Colors.white,
-                                            size: 28,
-                                          ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  /// Builds a studio control panel button with icon + label (TVU-style).
+  Widget _buildPanelButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color? iconColor,
+    bool isActive = false,
+  }) {
+    return _InteractiveButton(
+      onPressed: onTap,
+      child: SizedBox(
+        width: 60,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 20,
+              color: iconColor ?? (isActive ? const Color(0xFF10B981) : const Color(0xFFCBD5E1)),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+                fontSize: 8,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1409,30 +1401,6 @@ class _BroadcastViewState extends State<BroadcastView> {
     );
   }
 
-  Widget _buildRoundOverlayButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    Color? iconColor,
-  }) {
-    return _InteractiveButton(
-      onPressed: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: _buttonBgColor,
-          shape: BoxShape.circle,
-          border: Border.all(color: _buttonBorderColor, width: 0.8),
-        ),
-        alignment: Alignment.center,
-        child: Icon(
-          icon,
-          color: iconColor ?? Colors.white,
-          size: 20,
-        ),
-      ),
-    );
-  }
 
   void _showSettingsPanel() {
     showModalBottomSheet(

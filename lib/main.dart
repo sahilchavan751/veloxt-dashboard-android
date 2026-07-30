@@ -10,6 +10,9 @@ void main() async {
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
+
+  // Force full-screen immersive mode — hide Android status bar & navigation bar
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   
   // Initialize Firebase using the shared web project configurations
   await Firebase.initializeApp(
