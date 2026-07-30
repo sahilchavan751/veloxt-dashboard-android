@@ -836,6 +836,7 @@ class _BroadcastViewState extends State<BroadcastView> {
   }
 
   Future<void> _switchCameraTo(String cameraId) async {
+    final previousCameraId = _selectedCameraId;
     try {
       await _channel.invokeMethod('switchCamera', {'cameraId': cameraId});
       if (!mounted) return;
@@ -843,10 +844,38 @@ class _BroadcastViewState extends State<BroadcastView> {
         _selectedCameraId = cameraId;
       });
       _fetchZoomRange();
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      // Revert to the previous working camera
+      setState(() {
+        _selectedCameraId = previousCameraId;
+      });
+
+      String message;
+      if (e.code == 'USB_PERMISSION_REQUIRED') {
+        message = "USB permission required. Please grant permission and try again.";
+      } else if (e.code == 'CAMERA_SWITCH_FAILED') {
+        message = "Failed to activate external camera. Reverted to main camera.";
+      } else {
+        message = "Camera switch failed: ${e.message}";
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: const Color(0xFFEF4444),
+          duration: const Duration(seconds: 3),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
+      setState(() {
+        _selectedCameraId = previousCameraId;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to switch camera: $e")),
+        SnackBar(
+          content: Text("Failed to switch camera: $e"),
+          backgroundColor: const Color(0xFFEF4444),
+        ),
       );
     }
   }

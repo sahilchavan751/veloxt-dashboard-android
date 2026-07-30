@@ -50,8 +50,12 @@ class _SetupViewState extends State<SetupView> {
       setState(() {
         _existingCameras = cameras;
         _isLoadingCameras = false;
-        if (cameras.length == 1) {
+        if (cameras.isNotEmpty && _selectedCameraId == null) {
           _selectedCameraId = cameras.first;
+          _isCreatingNew = false;
+        } else if (cameras.isEmpty) {
+          _isCreatingNew = true;
+          _selectedCameraId = null;
         }
       });
     } catch (e) {
@@ -196,22 +200,7 @@ class _SetupViewState extends State<SetupView> {
       body: SafeArea(
         child: Column(
           children: [
-            // Minimal Title
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  "Stream Setup",
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-              ),
-            ),
+
             Expanded(
               child: Center(
                 child: SingleChildScrollView(

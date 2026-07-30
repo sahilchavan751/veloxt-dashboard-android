@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.app.PendingIntent
 import android.os.Bundle
 import android.os.IBinder
 import android.view.SurfaceHolder
@@ -144,16 +145,56 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                 result.success(true)
             }
             "switchCamera" -> {
-                val cameraId = call.argument<String>("cameraId")
+                val rawCameraId = call.argument<String>("cameraId")
                 if (isBound && streamingService != null) {
                     val camera = StreamingForegroundService.camera
                     if (camera != null) {
-                        if (cameraId != null) {
-                            camera.switchCamera(cameraId)
-                        } else {
-                            camera.switchCamera()
+                        try {
+                            // Resolve synthetic usb_ IDs to real Camera2 external IDs
+                            val targetId = if (rawCameraId != null && rawCameraId.startsWith("usb_")) {
+                                resolveExternalCameraId(rawCameraId)
+                            } else {
+                                rawCameraId
+                            }
+
+                            // If this is a USB/external camera, check USB host permission first
+                            if (rawCameraId != null && rawCameraId.startsWith("usb_")) {
+                                val usbDeviceId = rawCameraId.removePrefix("usb_").toIntOrNull()
+                                if (usbDeviceId != null) {
+                                    val usbManager = getSystemService(Context.USB_SERVICE) as? android.hardware.usb.UsbManager
+                                    val usbDevice = usbManager?.deviceList?.values?.find { it.deviceId == usbDeviceId }
+                                    if (usbDevice != null && usbManager != null && !usbManager.hasPermission(usbDevice)) {
+                                        // Request USB permission — user will need to re-tap after granting
+                                        val permIntent = PendingIntent.getBroadcast(
+                                            this, 0,
+                                            Intent("com.custom.srt_stream.USB_PERMISSION"),
+                                            PendingIntent.FLAG_IMMUTABLE
+                                        )
+                                        usbManager.requestPermission(usbDevice, permIntent)
+                                        result.error("USB_PERMISSION_REQUIRED",
+                                            "USB permission requested. Please grant permission and try again.", null)
+                                        return
+                                    }
+                                }
+                            }
+
+                            if (targetId != null) {
+                                android.util.Log.d("MainActivity", "Switching camera to: $targetId (from: $rawCameraId)")
+                                camera.switchCamera(targetId)
+                            } else {
+                                camera.switchCamera()
+                            }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            android.util.Log.e("MainActivity", "switchCamera failed for '$rawCameraId': ${e.message}", e)
+                            // Fallback: try to recover by switching to the default back camera
+                            try {
+                                camera.switchCamera("0")
+                                android.util.Log.w("MainActivity", "Fell back to default camera '0' after switch failure")
+                            } catch (_: Exception) {}
+                            result.error("CAMERA_SWITCH_FAILED",
+                                "Failed to switch to camera '$rawCameraId': ${e.message}", null)
                         }
-                        result.success(true)
                     } else {
                         result.error("CAMERA_NULL", "Camera is not initialized", null)
                     }
@@ -260,11 +301,25 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                     }
 
                     // Also scan USB OTG host hardware bus for external USB webcams (e.g. Logitech Brio 100)
-                    // for Android ROMs (Oppo, iQOO, Xiaomi) that hide external cameras from CameraManager.cameraIdList
+                    // for Android ROMs (Oppo, iQOO, Xiaomi) that hide external cameras from CameraManager.cameraIdList.
+                    // We cross-reference USB video devices with Camera2 LENS_FACING_EXTERNAL entries to provide
+                    // the real Camera2 ID (not a synthetic one) so switchCamera() works correctly.
                     try {
                         val usbManager = getSystemService(Context.USB_SERVICE) as? android.hardware.usb.UsbManager
                         val deviceList = usbManager?.deviceList
                         if (deviceList != null) {
+                            // Pre-collect all Camera2 external-facing camera IDs for cross-referencing
+                            val externalCamera2Ids = mutableListOf<String>()
+                            for (camId in cameraManager.cameraIdList) {
+                                try {
+                                    val chars = cameraManager.getCameraCharacteristics(camId)
+                                    val facing = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                                    if (facing == android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL) {
+                                        externalCamera2Ids.add(camId)
+                                    }
+                                } catch (_: Exception) {}
+                            }
+
                             for ((_, device) in deviceList) {
                                 var isVideoDevice = device.deviceClass == 14 // USB_CLASS_VIDEO (0x0E)
                                 if (!isVideoDevice) {
@@ -276,25 +331,47 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                                     }
                                 }
                                 if (isVideoDevice) {
-                                    val usbId = "usb_${device.deviceId}"
-                                    if (!processedIds.contains(usbId)) {
-                                        val productName = device.productName ?: "External USB Webcam"
-                                        val webcamDetails = mapOf(
-                                            "id" to usbId,
-                                            "facing" to "External",
-                                            "maxWidth" to "1920",
-                                            "maxHeight" to "1080",
-                                            "hasAutoFocus" to "true",
-                                            "sensorOrientation" to "0",
-                                            "lensType" to "$productName (USB OTG)",
-                                            "fovDegrees" to "90",
-                                            "focalLength" to "3.6",
-                                            "isPhysical" to "true",
-                                            "vendorId" to device.vendorId.toString(),
-                                            "productId" to device.productId.toString()
-                                        )
-                                        resultList.add(webcamDetails)
-                                        processedIds.add(usbId)
+                                    // Try to find a matching Camera2 external ID that isn't already listed
+                                    val matchedCamera2Id = externalCamera2Ids.firstOrNull { !processedIds.contains(it) }
+
+                                    if (matchedCamera2Id != null && !processedIds.contains(matchedCamera2Id)) {
+                                        // Use the REAL Camera2 ID — this is what Camera2Base.switchCamera() needs
+                                        try {
+                                            val realDetails = extractCameraDetails(cameraManager, matchedCamera2Id, isPhysical = true)
+                                            val productName = device.productName ?: "External USB Webcam"
+                                            val enrichedDetails = realDetails.toMutableMap()
+                                            enrichedDetails["lensType"] = "$productName (USB OTG)"
+                                            enrichedDetails["vendorId"] = device.vendorId.toString()
+                                            enrichedDetails["productId"] = device.productId.toString()
+                                            enrichedDetails["usbDeviceId"] = device.deviceId.toString()
+                                            resultList.add(enrichedDetails)
+                                            processedIds.add(matchedCamera2Id)
+                                            externalCamera2Ids.remove(matchedCamera2Id)
+                                        } catch (_: Exception) {}
+                                    } else {
+                                        // Fallback: no Camera2 external entry found — use synthetic USB ID
+                                        // (this camera likely won't be switchable via Camera2, but we still show it)
+                                        val usbId = "usb_${device.deviceId}"
+                                        if (!processedIds.contains(usbId)) {
+                                            val productName = device.productName ?: "External USB Webcam"
+                                            val webcamDetails = mapOf(
+                                                "id" to usbId,
+                                                "facing" to "External",
+                                                "maxWidth" to "1920",
+                                                "maxHeight" to "1080",
+                                                "hasAutoFocus" to "true",
+                                                "sensorOrientation" to "0",
+                                                "lensType" to "$productName (USB OTG)",
+                                                "fovDegrees" to "90",
+                                                "focalLength" to "3.6",
+                                                "isPhysical" to "true",
+                                                "vendorId" to device.vendorId.toString(),
+                                                "productId" to device.productId.toString(),
+                                                "usbDeviceId" to device.deviceId.toString()
+                                            )
+                                            resultList.add(webcamDetails)
+                                            processedIds.add(usbId)
+                                        }
                                     }
                                 }
                             }
@@ -393,6 +470,29 @@ class MainActivity : FlutterActivity(), ConnectChecker {
             "focalLength" to String.format(java.util.Locale.US, "%.1f", focalLength),
             "isPhysical" to isPhysical.toString()
         )
+    }
+
+    /**
+     * Resolves a synthetic USB camera ID (e.g. "usb_1002") to a real Camera2
+     * LENS_FACING_EXTERNAL device ID that Camera2Base.switchCamera() can use.
+     * Falls back to null if no external Camera2 device is found.
+     */
+    private fun resolveExternalCameraId(syntheticId: String): String? {
+        try {
+            val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            for (id in cameraManager.cameraIdList) {
+                try {
+                    val chars = cameraManager.getCameraCharacteristics(id)
+                    val facing = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+                    if (facing == android.hardware.camera2.CameraMetadata.LENS_FACING_EXTERNAL) {
+                        android.util.Log.d("MainActivity", "Resolved synthetic '$syntheticId' -> Camera2 external ID '$id'")
+                        return id
+                    }
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+        android.util.Log.w("MainActivity", "No Camera2 external device found for synthetic ID '$syntheticId'")
+        return null
     }
 
     private fun startPreviewWhenSurfaceReady(view: OpenGlView) {

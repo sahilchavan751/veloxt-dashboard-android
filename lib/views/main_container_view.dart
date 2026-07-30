@@ -13,6 +13,7 @@ class MainContainerView extends StatefulWidget {
 
 class _MainContainerViewState extends State<MainContainerView> {
   int _currentIndex = 0;
+  late final PageController _pageController;
 
   final List<Widget> _pages = const [
     SetupView(),
@@ -20,10 +21,27 @@ class _MainContainerViewState extends State<MainContainerView> {
     SettingsView(),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   void _onTabTapped(int index) {
     setState(() {
       _currentIndex = index;
     });
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   @override
@@ -45,10 +63,15 @@ class _MainContainerViewState extends State<MainContainerView> {
         ),
         child: Stack(
           children: [
-            // 1. Pages (State-preserving IndexedStack)
+            // 1. Pages (Swipeable PageView)
             Positioned.fill(
-              child: IndexedStack(
-                index: _currentIndex,
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
                 children: _pages,
               ),
             ),
