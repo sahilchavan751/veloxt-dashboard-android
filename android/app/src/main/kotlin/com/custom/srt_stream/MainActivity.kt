@@ -383,6 +383,35 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                     result.error("CAMERA_ERROR", e.message, null)
                 }
             }
+            "installApk" -> {
+                val path = call.argument<String>("path")
+                if (path == null) {
+                    result.error("INVALID_PATH", "APK path is required", null)
+                    return
+                }
+                try {
+                    val file = java.io.File(path)
+                    if (!file.exists()) {
+                        result.error("FILE_NOT_FOUND", "APK file not found at: $path", null)
+                        return
+                    }
+
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        this,
+                        "${applicationContext.packageName}.fileprovider",
+                        file
+                    )
+
+                    val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/vnd.android.package-archive")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    }
+                    startActivity(installIntent)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("INSTALL_FAILED", e.message, null)
+                }
+            }
             else -> {
                 result.notImplemented()
             }

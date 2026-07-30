@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'setup_view.dart';
 import 'profile_view.dart';
 import 'settings_view.dart';
+import '../services/update_service.dart';
 
 class MainContainerView extends StatefulWidget {
   const MainContainerView({super.key});
@@ -25,6 +26,10 @@ class _MainContainerViewState extends State<MainContainerView> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _currentIndex);
+    // Check for app updates from GitHub Releases after the first frame renders
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdateService.checkForUpdate(context);
+    });
   }
 
   @override
