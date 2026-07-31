@@ -12,7 +12,7 @@ import 'package:flutter/services.dart';
 class UpdateService {
   // ─── CONFIGURE THESE TO MATCH YOUR GITHUB REPO ───
   static const String _githubOwner = 'sahilchavan751';
-  static const String _githubRepo = 'veloxt-dashboard-android';
+  static const String _githubRepo = 'veloxt-app-releases';
   static const String _apiUrl =
       'https://api.github.com/repos/$_githubOwner/$_githubRepo/releases/latest';
 
