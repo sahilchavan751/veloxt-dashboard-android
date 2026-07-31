@@ -68,6 +68,11 @@ class MainActivity : FlutterActivity(), ConnectChecker {
             SrtVideoViewFactory(this)
         )
 
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "com.custom.srt_stream/pip_view",
+            PipVideoViewFactory(this)
+        )
+
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             handleMethodCall(call, result)
@@ -223,6 +228,100 @@ class MainActivity : FlutterActivity(), ConnectChecker {
                     result.success(streamingService?.isAudioEnabled == true)
                 } else {
                     result.success(true)
+                }
+            }
+            "toggleFlashlight" -> {
+                if (isBound && streamingService != null) {
+                    val isLightOn = streamingService?.toggleFlashlight() ?: false
+                    result.success(isLightOn)
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "setVideoBitrate" -> {
+                val bitrate = call.argument<Int>("bitrate") ?: 2000000
+                if (isBound && streamingService != null) {
+                    streamingService?.setVideoBitrateOnFly(bitrate)
+                    result.success(true)
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "getNetworkType" -> {
+                try {
+                    val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                    val activeNetwork = cm.activeNetwork
+                    val caps = cm.getNetworkCapabilities(activeNetwork)
+                    if (caps != null) {
+                        when {
+                            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> result.success("Wi-Fi")
+                            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> result.success("5G/4G")
+                            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> result.success("LAN")
+                            else -> result.success("Online")
+                        }
+                    } else {
+                        result.success("Offline")
+                    }
+                } catch (_: Exception) {
+                    result.success("Cellular")
+                }
+            }
+            "getAudioInputs" -> {
+                try {
+                    val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                    val inputDevices = mutableListOf<Map<String, String>>()
+                    
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        val devices = audioManager.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)
+                        for (dev in devices) {
+                            val typeName = when (dev.type) {
+                                android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in Microphone"
+                                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth Headset"
+                                android.media.AudioDeviceInfo.TYPE_USB_DEVICE, android.media.AudioDeviceInfo.TYPE_USB_HEADSET -> "USB Audio Interface"
+                                android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired Headset Mic"
+                                else -> "Audio Input (${dev.type})"
+                            }
+                            val name = dev.productName.toString().ifEmpty { typeName }
+                            inputDevices.add(mapOf(
+                                "id" to dev.id.toString(),
+                                "name" to name,
+                                "type" to typeName
+                            ))
+                        }
+                    }
+                    if (inputDevices.isEmpty()) {
+                        inputDevices.add(mapOf("id" to "0", "name" to "Internal Mic Array", "type" to "Built-in Microphone"))
+                    }
+                    result.success(inputDevices)
+                } catch (e: Exception) {
+                    result.success(listOf(mapOf("id" to "0", "name" to "Internal Mic Array", "type" to "Built-in Microphone")))
+                }
+            }
+            "tapToFocus" -> {
+                val x = call.argument<Double>("x")?.toFloat() ?: 0f
+                val y = call.argument<Double>("y")?.toFloat() ?: 0f
+                val view = openGlView
+                if (isBound && streamingService != null && view != null) {
+                    val focused = streamingService?.tapToFocus(view, x, y) ?: false
+                    result.success(focused)
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service or view is not active", null)
+                }
+            }
+            "setExposure" -> {
+                val exposure = call.argument<Int>("exposure") ?: 0
+                if (isBound && streamingService != null) {
+                    streamingService?.setExposure(exposure)
+                    result.success(true)
+                } else {
+                    result.error("SERVICE_NOT_READY", "Streaming service is not active", null)
+                }
+            }
+            "getExposureRange" -> {
+                if (isBound && streamingService != null) {
+                    result.success(streamingService?.getExposureRange())
+                } else {
+                    result.success(mapOf("min" to 0, "max" to 0, "current" to 0))
                 }
             }
             "setZoom" -> {

@@ -178,6 +178,65 @@ class StreamingForegroundService : Service() {
         isAudioEnabled = false
     }
 
+    fun toggleFlashlight(): Boolean {
+        val cam = camera ?: return false
+        try {
+            if (cam.isLanternEnabled) {
+                cam.disableLantern()
+                return false
+            } else {
+                cam.enableLantern()
+                return true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("StreamingService", "Toggle flashlight failed: ${e.message}")
+            return false
+        }
+    }
+
+    fun setVideoBitrateOnFly(bitrateBps: Int) {
+        try {
+            camera?.setVideoBitrateOnFly(bitrateBps)
+        } catch (e: Exception) {
+            android.util.Log.e("StreamingService", "setVideoBitrateOnFly failed: ${e.message}")
+        }
+    }
+
+    fun tapToFocus(view: android.view.View, x: Float, y: Float): Boolean {
+        val cam = camera ?: return false
+        return try {
+            val time = android.os.SystemClock.uptimeMillis()
+            val event = android.view.MotionEvent.obtain(time, time, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
+            cam.tapToFocus(view, event)
+            event.recycle()
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("StreamingService", "tapToFocus failed: ${e.message}")
+            false
+        }
+    }
+
+    fun setExposure(value: Int) {
+        try {
+            camera?.exposure = value
+        } catch (e: Exception) {
+            android.util.Log.e("StreamingService", "setExposure failed: ${e.message}")
+        }
+    }
+
+    fun getExposureRange(): Map<String, Int> {
+        val cam = camera ?: return mapOf("min" to 0, "max" to 0, "current" to 0)
+        return try {
+            mapOf(
+                "min" to cam.minExposure,
+                "max" to cam.maxExposure,
+                "current" to cam.exposure
+            )
+		} catch (_: Exception) {
+            mapOf("min" to 0, "max" to 0, "current" to 0)
+        }
+    }
+
     fun updateOrientation() {
         val cam = camera ?: return
         try {
