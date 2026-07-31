@@ -73,10 +73,7 @@ class _BroadcastViewState extends State<BroadcastView> {
   int _consecutiveLowBitrateTicks = 0;
   int _consecutiveGoodBitrateTicks = 0;
 
-  // Focus & Exposure Controls
-  Offset? _focusPoint;
-  bool _showFocusRing = false;
-  Timer? _focusRingTimer;
+  // Exposure Controls
   bool _showExposureSlider = false;
   int _minExposure = -4;
   int _maxExposure = 4;
@@ -258,11 +255,6 @@ class _BroadcastViewState extends State<BroadcastView> {
     } catch (_) {}
   }
 
-  Future<void> _triggerTapToFocus(double x, double y) async {
-    try {
-      await _channel.invokeMethod('tapToFocus', {'x': x, 'y': y});
-    } catch (_) {}
-  }
 
   Future<void> _setExposure(int value) async {
     try {
@@ -1153,27 +1145,7 @@ class _BroadcastViewState extends State<BroadcastView> {
                     // ── 1. NATIVE CAMERA VIEWPORT ──
                     Positioned.fill(
                       child: _isNativeInitialized
-                          ? GestureDetector(
-                              onTapDown: (details) {
-                                final x = details.localPosition.dx;
-                                final y = details.localPosition.dy;
-                                _triggerTapToFocus(x, y);
-
-                                _focusRingTimer?.cancel();
-                                setState(() {
-                                  _focusPoint = details.localPosition;
-                                  _showFocusRing = true;
-                                });
-                                _focusRingTimer = Timer(const Duration(milliseconds: 1200), () {
-                                  if (mounted) {
-                                    setState(() {
-                                      _showFocusRing = false;
-                                    });
-                                  }
-                                });
-                              },
-                              child: const NativeCameraPreview(),
-                            )
+                          ? const NativeCameraPreview()
                           : Container(
                               color: const Color(0xFF050811),
                               child: const Center(
@@ -1188,23 +1160,6 @@ class _BroadcastViewState extends State<BroadcastView> {
                               ),
                             ),
                     ),
-
-                    // Focus Ring Overlay
-                    if (_showFocusRing && _focusPoint != null)
-                      Positioned(
-                        left: _focusPoint!.dx - 24,
-                        top: _focusPoint!.dy - 24,
-                        child: IgnorePointer(
-                          child: Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              border: Border.all(color: const Color(0xFF10B981), width: 1.5),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                        ),
-                      ),
 
                     // ── 2. SUBTLE TOP/BOTTOM VIGNETTE ──
                     Positioned.fill(
@@ -1700,14 +1655,14 @@ class _BroadcastViewState extends State<BroadcastView> {
                               ),
                             ),
 
-                          // ━━━ VERTICAL ZOOM SLIDER OVERLAY ━━━
+                          // ━━━ VERTICAL ZOOM SLIDER OVERLAY (left side) ━━━
                           if (_showZoomSlider)
                             Positioned(
-                              right: 82,
+                              left: 24,
                               top: 20,
                               bottom: 20,
                               child: Container(
-                                width: 48,
+                                width: 44,
                                 padding: const EdgeInsets.symmetric(vertical: 10),
                                 decoration: BoxDecoration(
                                   color: const Color(0xE60F172A),
