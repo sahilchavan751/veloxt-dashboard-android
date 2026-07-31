@@ -41,6 +41,12 @@ android {
                 storePassword = System.getenv("KEY_STORE_PASSWORD") ?: keyProperties.getProperty("storePassword") ?: "veloxtstreamsecret"
                 keyAlias = System.getenv("KEY_ALIAS") ?: keyProperties.getProperty("keyAlias") ?: "veloxt"
                 keyPassword = System.getenv("KEY_PASSWORD") ?: keyProperties.getProperty("keyPassword") ?: "veloxtstreamsecret"
+            } else {
+                val debugConfig = signingConfigs.getByName("debug")
+                storeFile = debugConfig.storeFile
+                storePassword = debugConfig.storePassword
+                keyAlias = debugConfig.keyAlias
+                keyPassword = debugConfig.keyPassword
             }
         }
     }

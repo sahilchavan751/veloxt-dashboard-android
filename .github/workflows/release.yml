@@ -55,10 +55,14 @@ jobs:
         if: steps.check_tag.outputs.exists == 'false'
         run: flutter pub get
 
-      - name: Decode Android Keystore
-        if: steps.check_tag.outputs.exists == 'false' && secrets.KEYSTORE_BASE64 != ''
+      - name: Setup Android Release Keystore
+        if: steps.check_tag.outputs.exists == 'false'
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
+          else
+            keytool -genkey -v -keystore android/app/upload-keystore.jks -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias veloxt -storepass veloxtstreamsecret -keypass veloxtstreamsecret -dname "CN=Veloxt, OU=Dev, O=Veloxt, L=City, ST=State, C=US"
+          fi
 
       - name: Build Release APK
         if: steps.check_tag.outputs.exists == 'false'
