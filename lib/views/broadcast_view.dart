@@ -1659,24 +1659,21 @@ class _BroadcastViewState extends State<BroadcastView> {
                           if (_showZoomSlider)
                             Positioned(
                               left: 24,
-                              top: 20,
-                              bottom: 20,
+                              top: 40,
+                              bottom: 40,
                               child: Container(
                                 width: 44,
-                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                padding: const EdgeInsets.symmetric(vertical: 8),
                                 decoration: BoxDecoration(
                                   color: const Color(0xE60F172A),
-                                  borderRadius: BorderRadius.circular(22),
+                                  borderRadius: BorderRadius.circular(16),
                                   border: Border.all(color: const Color(0xFF1E293B), width: 0.8),
                                   boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 10)],
                                 ),
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    _buildZoomPresetPill(1.0, "1x"),
-                                    _buildZoomPresetPill(2.0, "2x"),
-                                    _buildZoomPresetPill(5.0, "5x"),
-                                    const SizedBox(height: 4),
+                                    const Icon(Icons.zoom_in_rounded, color: Color(0xFF10B981), size: 14),
                                     Expanded(
                                       child: RotatedBox(
                                         quarterTurns: 3,
@@ -1690,10 +1687,9 @@ class _BroadcastViewState extends State<BroadcastView> {
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
                                     Text(
                                       "${_zoom.toStringAsFixed(1)}x",
-                                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                                      style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.bold),
                                     ),
                                   ],
                                 ),
@@ -1816,27 +1812,6 @@ class _BroadcastViewState extends State<BroadcastView> {
     );
   }
 
-  Widget _buildZoomPresetPill(double targetZoom, String label) {
-    final isSelected = (_zoom - targetZoom).abs() < 0.2;
-    return GestureDetector(
-      onTap: () => _setZoom(targetZoom),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF10B981) : const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? Colors.white : const Color(0xFF94A3B8),
-            fontSize: 9,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
 
 
   void _showSettingsPanel() {
